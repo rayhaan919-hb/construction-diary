@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-arabic: var(--font-noto-arabic), "Noto Naskh Arabic", "Tahoma", sans-serif;
+  --color-canvas: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-accent: #D97706;
+  --color-status-ok: #059669;
+  --color-status-warn: #EA580C;
+  --color-status-expired: #DC2626;
+}
+
+:root {
+  --bg-canvas: #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --accent-primary: #D97706;
+  --status-ok: #059669;
+  --status-warn: #EA580C;
+  --status-expired: #DC2626;
+}
+
+html,
+body {
+  background-color: var(--bg-canvas);
+  color: #0F172A;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-arabic {
+  font-family: var(--font-arabic);
+}

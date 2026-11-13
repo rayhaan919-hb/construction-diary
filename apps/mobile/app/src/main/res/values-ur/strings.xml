@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">سائٹ ڈائری</string>
+
+    <!-- Language & Common -->
+    <string name="lang_en">EN</string>
+    <string name="lang_ur">اردو</string>
+    <string name="retry">دوبارہ کوشش کریں</string>
+    <string name="cancel">منسوخ کریں</string>
+    <string name="save">محفوظ کریں</string>
+    <string name="back">واپس</string>
+    <string name="close">بند کریں</string>
+    <string name="sync_now">ابھی سنک کریں</string>
+    <string name="offline_badge">آف لائن</string>
+    <string name="pending_sync_count">%1$d باقی</string>
+    <string name="all_synced">سب سنک ہے</string>
+    <string name="syncing">سنک ہو رہا ہے…</string>
+    <string name="sync_error_prefix">سنک میں خرابی: %1$s</string>
+
+    <!-- Auth -->
+    <string name="login_title">سائٹ ڈائری سائن ان</string>
+    <string name="login_subtitle">آف لائن یومیہ لاگ اور پرمٹ ٹریکر</string>
+    <string name="email_label">ای میل ایڈریس</string>
+    <string name="password_label">پاس ورڈ</string>
+    <string name="sign_in">سائن ان کریں</string>
+    <string name="signing_in">سائن ان ہو رہا ہے…</string>
+    <string name="login_error_invalid">ای میل یا پاس ورڈ غلط ہے</string>
+    <string name="login_error_network">سرور سے رابطہ نہیں ہو سکا۔ انٹرنیٹ چیک کریں۔</string>
+
+    <string name="change_password_title">پاس ورڈ تبدیل کریں</string>
+    <string name="change_password_subtitle">حفاظت کے لیے جاری رکھنے سے پہلے اپنا عارضی پاس ورڈ تبدیل کریں۔</string>
+    <string name="current_password_label">موجودہ پاس ورڈ</string>
+    <string name="new_password_label">نیا پاس ورڈ (کم از کم 8 حروف)</string>
+    <string name="confirm_password_label">نئے پاس ورڈ کی تصدیق کریں</string>
+    <string name="update_password_cta">پاس ورڈ محفوظ کریں</string>
+    <string name="password_mismatch">نئے پاس ورڈ آپس میں نہیں ملتے</string>
+    <string name="password_too_short">پاس ورڈ کم از کم 8 حروف کا ہونا ضروری ہے</string>
+
+    <!-- Projects List -->
+    <string name="projects_title">میری سائٹس</string>
+    <string name="sign_out">لاگ آؤٹ</string>
+    <string name="mobile_data_upload_label">موبائل ڈیٹا پر آڈیو اور تصاویر اپلوڈ کریں</string>
+    <string name="mobile_data_upload_hint">بند = صرف وائی فائی (ڈیٹا کی بچت)</string>
+    <string name="projects_empty_title">ابھی کوئی پروجیکٹ تفویض نہیں ہوا</string>
+    <string name="projects_empty_desc">پروجیکٹ مالک سے خود کو بطور سپروائزر شامل کرنے کو کہیں، پھر سنک دبائیں۔</string>
+    <string name="permit_health_ok">پرمٹ درست</string>
+    <string name="permit_health_warn">پرمٹ ختم ہونے والا ہے</string>
+    <string name="permit_health_expired">پرمٹ زائد المیعاد</string>
+    <string name="permit_health_none">کوئی پرمٹ نہیں</string>
+    <string name="today_logs_count">آج %1$d لاگز</string>
+    <string name="today_labor_count">مزدور: %1$d</string>
+    <string name="today_labor_none">مزدور: --</string>
+
+    <!-- Project Diary -->
+    <string name="diary_title">سائٹ ڈائری</string>
+    <string name="record_site_note_cta">سائٹ نوٹ ریکارڈ کریں</string>
+    <string name="permits_button">پرمٹس</string>
+    <string name="today_summary_header">آج (%1$s)</string>
+    <string name="diary_empty_title">ابھی کوئی سائٹ نوٹ ریکارڈ نہیں ہوا</string>
+    <string name="diary_empty_desc">آف لائن آواز اور تصاویر محفوظ کرنے کے لیے سائٹ نوٹ ریکارڈ کریں دبائیں۔</string>
+    <string name="permit_banner_expired_single">1 پرمٹ زائد المیعاد: %1$s (%2$d دن)</string>
+    <string name="permit_banner_expired_multi">%1$d پرمٹس زائد المیعاد • اگلا: %2$s</string>
+    <string name="permit_banner_expiring_single">پرمٹ %1$d دن میں ختم ہو گا: %2$s</string>
+    <string name="permit_banner_expiring_multi">%1$d پرمٹس جلد ختم ہو رہے ہیں • اگلا: %2$s (%3$d دن)</string>
+    <string name="view_permits">پرمٹس دیکھیں</string>
+
+    <!-- Extraction & Upload Statuses -->
+    <string name="status_synced">سنک شدہ</string>
+    <string name="status_pending_push">سنک باقی</string>
+    <string name="media_pending">اپلوڈ قطار میں</string>
+    <string name="media_uploaded">میڈیا اپلوڈ ہو گیا</string>
+    <string name="extraction_not_started">آڈیو نہیں</string>
+    <string name="extraction_pending">AI قطار میں</string>
+    <string name="extraction_processing">AI تجزیہ جاری…</string>
+    <string name="extraction_done">AI تیار ہے</string>
+    <string name="extraction_failed">AI ناکام</string>
+    <string name="edited_by_human_badge">سپروائزر کی ترمیم شدہ</string>
+
+    <!-- Record Site Note -->
+    <string name="record_note_title">سائٹ نوٹ ریکارڈ کریں</string>
+    <string name="audio_section_title">صوتی پیغام (M4A • زیادہ سے زیادہ 5:00)</string>
+    <string name="start_recording">آواز ریکارڈ کریں</string>
+    <string name="stop_recording">ریکارڈنگ بند کریں</string>
+    <string name="rerecord_audio">دوبارہ ریکارڈ</string>
+    <string name="delete_audio">آڈیو ہٹائیں</string>
+    <string name="audio_recorded_label">ریکارڈ شدہ: %1$s</string>
+    <string name="photos_section_title">سائٹ کی تصاویر (%1$d)</string>
+    <string name="open_camera">تصویر کھینچیں</string>
+    <string name="capture_photo">فوٹو لیں</string>
+    <string name="close_camera">کیمرہ بند کریں</string>
+    <string name="gps_strip_notice">مقام کی معلومات ہٹا دی گئیں (پروجیکٹ پالیسی)</string>
+    <string name="gps_keep_notice">پروجیکٹ پالیسی کے تحت فوٹو GPS فعال ہے</string>
+    <string name="typed_note_label">تحریری فیلڈ نوٹ (اختیاری)</string>
+    <string name="typed_note_hint">موسم، سامان کی آمد، حفاظتی نوٹ یا رکاوٹیں لکھیں…</string>
+    <string name="save_note_offline">آف لائن محفوظ کریں</string>
+    <string name="permission_audio_needed">صوتی نوٹ ریکارڈ کرنے کے لیے مائیکروفون کی اجازت درکار ہے۔</string>
+    <string name="permission_camera_needed">سائٹ کی تصاویر لینے کے لیے کیمرے کی اجازت درکار ہے۔</string>
+    <string name="grant_permission">اجازت دیں</string>
+    <string name="record_validation_empty">محفوظ کرنے سے پہلے آواز ریکارڈ کریں، تصویر لیں یا نوٹ لکھیں۔</string>
+
+    <!-- Log Detail & Edit -->
+    <string name="log_detail_title">سائٹ نوٹ کی تفصیل</string>
+    <string name="play_audio">صوتی نوٹ چلائیں</string>
+    <string name="stop_audio">پلے بیک بند کریں</string>
+    <string name="retry_ai_extraction">AI تجزیہ دوبارہ چلائیں</string>
+    <string name="transcript_section">صوتی تحریر (%1$s)</string>
+    <string name="no_transcript_yet">آڈیو اپلوڈ اور AI تجزیہ مکمل ہونے کے بعد تحریر یہاں ظاہر ہو گی۔</string>
+    <string name="summary_section">منظم یومیہ خلاصہ</string>
+    <string name="tasks_completed_label">مکمل شدہ کام (فی سطر ایک)</string>
+    <string name="labor_count_label">کل مزدوروں کی تعداد</string>
+    <string name="materials_label">موصول ہونے والا سامان (فی سطر ایک)</string>
+    <string name="blockers_label">رکاوٹیں / تاخیر (فی سطر ایک)</string>
+    <string name="save_human_edits">ترامیم محفوظ کریں</string>
+    <string name="saved_for_sync">مقامی طور پر محفوظ — سنک کے لیے قطار میں</string>
+
+    <!-- Permits -->
+    <string name="permits_title">سائٹ پرمٹس</string>
+    <string name="add_permit_cta">پرمٹ شامل کریں</string>
+    <string name="permits_empty_title">کوئی پرمٹ درج نہیں ہے</string>
+    <string name="permits_empty_desc">آف لائن میعاد ٹریک کرنے کے لیے بلدیاتی، حفاظتی یا ماحولیاتی پرمٹ شامل کریں۔</string>
+    <string name="permit_status_active">فعال</string>
+    <string name="permit_status_expiring">جلد ختم</string>
+    <string name="permit_status_expired">زائد المیعاد</string>
+    <string name="permit_days_remaining">%1$d دن باقی</string>
+    <string name="permit_days_overdue">%1$d دن گزر چکے</string>
+    <string name="permit_expires_today">آج ختم ہو رہا ہے</string>
+    <string name="permit_name_label">پرمٹ کا نام *</string>
+    <string name="permit_authority_label">جاری کرنے والا ادارہ *</string>
+    <string name="permit_number_label">پرمٹ نمبر</string>
+    <string name="permit_issue_date_label">اجراء کی تاریخ (YYYY-MM-DD)</string>
+    <string name="permit_expiry_date_label">آخری تاریخ * (YYYY-MM-DD)</string>
+    <string name="attach_permit_photo">پرمٹ دستاویز کی تصویر لیں</string>
+    <string name="permit_photo_attached">دستاویز کی تصویر منسلک ہے</string>
+    <string name="permit_validation_required">پرمٹ کا نام، ادارہ اور درست YYYY-MM-DD آخری تاریخ لازمی ہیں۔</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_name">پرمٹ اور سنک الرٹس</string>
+    <string name="notification_channel_desc">پرمٹ کی میعاد کی یاد دہانی اور AI تجزیہ کی اطلاعات</string>
+</resources>

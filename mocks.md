@@ -1,0 +1,2 @@
+# Offline Mock Strategy
+- When `USE_MOCK_GEMINI=true`, `services/api/ai_extractor.py` (or `app/services/ai_extractor.py` re-exported at `services/api/ai_extractor.py`) returns a deterministic JSON fixture (`tasks_completed: ["Foundation pouring Block B"]`, `labor_count: 14`, plus `material_deliveries`, `blockers`, `transcript`, `detected_language`) so `pytest` extractor tests run offline in <1s and the full real-Postgres suite completes quickly (<30s).

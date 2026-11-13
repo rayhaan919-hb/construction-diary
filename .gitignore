@@ -1,0 +1,32 @@
+# Env & local secrets
+.env
+.env.local
+services/api/.env
+apps/web/.env.local
+apps/mobile/local.properties
+apps/mobile/app/google-services.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+services/api/.storage/
+*.pgserver/
+
+# Node / Next.js
+node_modules/
+apps/web/.next/
+apps/web/out/
+*.tsbuildinfo
+
+# Android / Gradle
+apps/mobile/.gradle/
+apps/mobile/build/
+apps/mobile/app/build/
+*.iml
+.idea/
+*.keystore
+*.jks

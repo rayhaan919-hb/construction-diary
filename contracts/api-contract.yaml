@@ -1,0 +1,1042 @@
+openapi: 3.1.0
+info:
+  title: Construction Permit & Site Diary API
+  version: 1.0.0
+  description: |
+    FROZEN CONTRACT v1. Source of truth for ai-backend-agent (implements),
+    web-agent (generates TS types via openapi-typescript) and mobile-agent
+    (hand-written Retrofit/kotlinx.serialization models that MUST match).
+
+    Conventions
+    - All IDs are UUIDv4. Timestamps are RFC 3339 UTC. Dates are YYYY-MM-DD (project-local).
+    - JSON field names are snake_case.
+    - Auth: `Authorization: Bearer <access_token>` (JWT HS256, 15 min). Refresh tokens are
+      opaque, 60-day sliding, rotated on every use.
+    - Errors use RFC 7807 `application/problem+json` (see Problem schema) with a stable `code`.
+    - Roles: OWNER (web portal), SUPERVISOR (mobile). Access to any project-scoped resource
+      requires an active (non-deleted) row in project_members.
+servers:
+  - url: http://localhost:8000
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+  - name: projects
+  - name: permits
+  - name: logs
+  - name: media
+  - name: sync
+  - name: system
+
+paths:
+  # ---------------------------------------------------------------- system
+  /healthz:
+    get:
+      tags: [system]
+      security: []
+      summary: Liveness + DB connectivity
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+
+  # ---------------------------------------------------------------- auth
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Email + password login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                device_label: { type: string, maxLength: 120, description: "e.g. 'Pixel 6a' or 'web'" }
+      responses:
+        '200':
+          description: Tokens issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      summary: Rotate refresh token and issue a new access token
+      description: |
+        The presented refresh token is revoked and replaced. Presenting an already-rotated
+        token revokes the entire chain (theft detection) and returns 401 code=TOKEN_REUSED.
+        Mobile MUST NOT log the user out on network errors — only on 401.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: New token pair
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke a refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '204': { description: Revoked }
+
+  /v1/me:
+    get:
+      tags: [auth]
+      summary: Current user
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/me/password:
+    post:
+      tags: [auth]
+      summary: Change password (required when must_change_password=true)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string, minLength: 8 }
+      responses:
+        '204': { description: Changed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /v1/me/device-tokens:
+    post:
+      tags: [auth]
+      summary: Register/refresh an FCM token for push alerts (idempotent upsert)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fcm_token]
+              properties:
+                fcm_token: { type: string }
+      responses:
+        '204': { description: Registered }
+
+  # ---------------------------------------------------------------- projects
+  /v1/projects:
+    get:
+      tags: [projects]
+      summary: Portfolio — projects the caller is a member of, with Bento card stats
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProjectSummary' }
+    post:
+      tags: [projects]
+      summary: Create project (OWNER only; caller becomes OWNER member)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /v1/projects/{project_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [projects]
+      summary: Project detail
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [projects]
+      summary: Update project (OWNER member only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPatch' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [projects]
+      summary: Soft-delete project (OWNER member only)
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/projects/{project_id}/members:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [projects]
+      summary: List members
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Member' }
+    post:
+      tags: [projects]
+      summary: Invite a supervisor (OWNER member only)
+      description: |
+        If no user with this email exists, one is created with role SUPERVISOR,
+        must_change_password=true, and a one-time `temporary_password` is returned
+        (shown once to the owner, who shares it out-of-band). Existing users are simply added.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, full_name]
+              properties:
+                email: { type: string, format: email }
+                full_name: { type: string, minLength: 1 }
+      responses:
+        '201':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [member]
+                properties:
+                  member: { $ref: '#/components/schemas/Member' }
+                  temporary_password: { type: [string, 'null'] }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/projects/{project_id}/members/{user_id}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [projects]
+      summary: Remove member (tombstone; mobile purges that project's local data on next pull)
+      responses:
+        '204': { description: Removed }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------------------------------------------------------- permits
+  /v1/projects/{project_id}/permits:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [permits]
+      summary: Permits with derived status, ordered by expiry_date ascending
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Permit' }
+    post:
+      tags: [permits]
+      summary: Create permit (web). Mobile creates permits via /v1/sync/push.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PermitInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Permit' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /v1/permits/{permit_id}:
+    parameters:
+      - name: permit_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [permits]
+      summary: "Update permit (OWNER members: any; SUPERVISOR: only permits they created)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PermitPatch' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Permit' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [permits]
+      summary: Soft-delete permit
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------------------------------------------------------- logs (read + extraction)
+  /v1/projects/{project_id}/timeline:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [logs]
+      summary: Reverse-chronological daily reports (only days that have logs)
+      parameters:
+        - name: before
+          in: query
+          description: Exclusive upper bound date (project-local). Omit for most recent.
+          schema: { type: string, format: date }
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 31, default: 7 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [days, next_before]
+                properties:
+                  days:
+                    type: array
+                    items: { $ref: '#/components/schemas/DailyReport' }
+                  next_before:
+                    type: [string, 'null']
+                    format: date
+                    description: Pass as `before` to load older days; null when exhausted.
+
+  /v1/projects/{project_id}/days/{log_date}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - name: log_date
+        in: path
+        required: true
+        schema: { type: string, format: date }
+    get:
+      tags: [logs]
+      summary: Aggregated daily report (powers the Today tile and the PDF export)
+      responses:
+        '200':
+          description: OK (logs may be empty)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailyReport' }
+
+  /v1/logs/{log_id}:
+    parameters:
+      - $ref: '#/components/parameters/LogId'
+    get:
+      tags: [logs]
+      summary: Single log with photos (signed read URLs)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteLog' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/logs/extract:
+    post:
+      tags: [logs]
+      summary: (Re)queue Gemini extraction for a log — async
+      description: |
+        Extraction normally starts automatically when the log's audio upload is
+        confirmed via /v1/media/complete. This endpoint is for manual retries
+        (e.g. after FAILED). Resets extraction_attempts to 0 and sets status PENDING.
+        The audio location is resolved server-side from site_logs.audio_uri.
+        Results reach clients via GET /v1/logs/{log_id} and /v1/sync/pull.
+        If edited_by_human=true, a re-run updates transcript/detected_language only and
+        NEVER overwrites structured_summary.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [log_id]
+              properties:
+                log_id: { type: string, format: uuid }
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [log_id, extraction_status]
+                properties:
+                  log_id: { type: string, format: uuid }
+                  extraction_status: { $ref: '#/components/schemas/ExtractionStatus' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Audio not uploaded yet (code=AUDIO_NOT_UPLOADED) or already PROCESSING (code=EXTRACTION_IN_PROGRESS)
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  # ---------------------------------------------------------------- media
+  /v1/media/upload-url:
+    post:
+      tags: [media]
+      summary: Get a short-lived signed PUT URL for direct upload
+      description: |
+        Object key layout: `projects/{project_id}/{kind_dir}/{object_id}.{ext}` where kind_dir is
+        audio | photos | permits. The returned storage_uri is what clients store in
+        site_logs.audio_uri / site_log_photos.storage_uri / permits.document_photo_uri.
+        GCS backend: V4 signed URL (15 min). Local backend: `{API_BASE}/v1/media/local/{key}?sig=...&exp=...`.
+        Uploads are idempotent (same key) so WorkManager can safely retry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, project_id, object_id, content_type, byte_size]
+              properties:
+                kind: { $ref: '#/components/schemas/MediaKind' }
+                project_id: { type: string, format: uuid }
+                object_id:
+                  type: string
+                  format: uuid
+                  description: site_log id (AUDIO), site_log_photo id (PHOTO), or permit id (PERMIT_DOC)
+                content_type: { type: string, enum: [audio/mp4, image/jpeg] }
+                byte_size: { type: integer, minimum: 1, maximum: 20971520 }
+      responses:
+        '200':
+          description: Signed URL issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadTicket' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /v1/media/complete:
+    post:
+      tags: [media]
+      summary: Confirm an upload finished
+      description: |
+        Server verifies the object exists in storage, then marks the owning row UPLOADED
+        (site_logs.audio_upload_status / site_log_photos.upload_status). For AUDIO it also
+        sets extraction_status=PENDING and enqueues extraction (unless already DONE).
+        Idempotent. The owning row must already have been pushed via /v1/sync/push;
+        otherwise 409 code=ROW_NOT_SYNCED (client retries after push).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, object_id]
+              properties:
+                kind: { $ref: '#/components/schemas/MediaKind' }
+                object_id: { type: string, format: uuid }
+      responses:
+        '204': { description: Confirmed }
+        '404':
+          description: Object not found in storage (code=OBJECT_MISSING)
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/media/local/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        schema: { type: string }
+        description: URL-encoded object key
+      - name: sig
+        in: query
+        required: true
+        schema: { type: string }
+      - name: exp
+        in: query
+        required: true
+        schema: { type: integer }
+    put:
+      tags: [media]
+      security: []
+      summary: Local-storage stand-in for a signed PUT (STORAGE_BACKEND=local only; 404 otherwise)
+      requestBody:
+        required: true
+        content:
+          audio/mp4: { schema: { type: string, format: binary } }
+          image/jpeg: { schema: { type: string, format: binary } }
+      responses:
+        '200': { description: Stored }
+        '403': { description: Bad or expired signature }
+    get:
+      tags: [media]
+      security: []
+      summary: Local-storage stand-in for a signed GET
+      responses:
+        '200': { description: File bytes }
+        '403': { description: Bad or expired signature }
+
+  # ---------------------------------------------------------------- sync
+  /v1/sync/push:
+    post:
+      tags: [sync]
+      summary: Idempotent batch upsert of client-originated changes (mobile)
+      description: |
+        Each record is applied independently (one bad record never blocks the batch).
+        Conflict policy: last-write-wins by SERVER RECEIVE ORDER on client-owned fields.
+        Server-owned fields (see schemas) are ignored if sent.
+        Apply order within a batch: permits, site_logs, site_log_photos.
+        Authorization per record: caller must be an active member of the record's project;
+        site_logs.author_id is forced to the caller on insert; a SUPERVISOR may only update
+        logs they authored and permits they created.
+        Re-pushing an identical record is a no-op apart from bumping server_version.
+        Max 200 records per request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [changes]
+              properties:
+                changes:
+                  type: object
+                  properties:
+                    permits:
+                      type: array
+                      items: { $ref: '#/components/schemas/PermitPush' }
+                    site_logs:
+                      type: array
+                      items: { $ref: '#/components/schemas/SiteLogPush' }
+                    site_log_photos:
+                      type: array
+                      items: { $ref: '#/components/schemas/SiteLogPhotoPush' }
+      responses:
+        '200':
+          description: Per-record results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results, server_time]
+                properties:
+                  server_time: { type: string, format: date-time }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [entity, id, status]
+                      properties:
+                        entity: { type: string, enum: [permits, site_logs, site_log_photos] }
+                        id: { type: string, format: uuid }
+                        status: { type: string, enum: [APPLIED, REJECTED] }
+                        server_version: { type: [integer, 'null'], format: int64 }
+                        error_code:
+                          type: [string, 'null']
+                          description: FORBIDDEN | NOT_FOUND | VALIDATION | PROJECT_DELETED
+                        error_detail: { type: [string, 'null'] }
+        '413': { description: More than 200 records }
+
+  /v1/sync/pull:
+    get:
+      tags: [sync]
+      summary: Changes since a server cursor, for all projects the caller belongs to
+      description: |
+        Returns rows (including tombstones with deleted_at set) whose server_version > since,
+        ordered by server_version across all entity types, capped at `limit` rows total.
+        Client loops until has_more=false, persisting next_cursor after each page.
+
+        Scoped backfill: when the client sees a project_members row for itself that it did not
+        have before (newly added to a project), it MUST call pull with `project_id=<id>&since=0`
+        to backfill that project's history (rows older than its global cursor), using a separate
+        per-project cursor until has_more=false. When it sees its own membership tombstone, it
+        purges that project's local data.
+      parameters:
+        - name: since
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 500 }
+        - name: project_id
+          in: query
+          description: Restrict to one project (scoped backfill)
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Change page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changes, next_cursor, has_more]
+                properties:
+                  next_cursor: { type: integer, format: int64 }
+                  has_more: { type: boolean }
+                  changes:
+                    type: object
+                    required: [projects, project_members, permits, site_logs, site_log_photos]
+                    properties:
+                      projects:
+                        type: array
+                        items: { $ref: '#/components/schemas/Project' }
+                      project_members:
+                        type: array
+                        items: { $ref: '#/components/schemas/Member' }
+                      permits:
+                        type: array
+                        items: { $ref: '#/components/schemas/Permit' }
+                      site_logs:
+                        type: array
+                        items: { $ref: '#/components/schemas/SiteLog' }
+                      site_log_photos:
+                        type: array
+                        items: { $ref: '#/components/schemas/SiteLogPhoto' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    LogId:
+      name: log_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid/expired credentials (codes INVALID_CREDENTIALS, TOKEN_EXPIRED, TOKEN_REUSED)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Authenticated but not allowed (code FORBIDDEN)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Not found or not visible to caller (code NOT_FOUND)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: State conflict (see code)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ValidationError:
+      description: Request validation failed (code VALIDATION)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, default: about:blank }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string, description: Stable machine-readable error code }
+        detail: { type: string }
+        errors:
+          type: array
+          description: Field-level validation errors
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+
+    Role:
+      type: string
+      enum: [OWNER, SUPERVISOR]
+
+    User:
+      type: object
+      required: [id, email, full_name, role, preferred_locale, must_change_password]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        full_name: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        preferred_locale: { type: string, enum: [en, ur, ar] }
+        must_change_password: { type: boolean }
+
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, access_expires_in, refresh_expires_at, user]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        access_expires_in: { type: integer, description: Seconds (900) }
+        refresh_expires_at: { type: string, format: date-time }
+        user: { $ref: '#/components/schemas/User' }
+
+    ProjectInput:
+      type: object
+      required: [name, site_address]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        site_address: { type: string, minLength: 1 }
+        owner_phone: { type: [string, 'null'] }
+        timezone: { type: string, default: Asia/Karachi, description: IANA timezone }
+        allow_photo_gps: { type: boolean, default: false }
+
+    ProjectPatch:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        site_address: { type: string, minLength: 1 }
+        owner_phone: { type: [string, 'null'] }
+        timezone: { type: string }
+        allow_photo_gps: { type: boolean }
+
+    Project:
+      type: object
+      required: [id, name, site_address, timezone, allow_photo_gps, created_at, updated_at, server_version]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        site_address: { type: string }
+        owner_phone: { type: [string, 'null'] }
+        timezone: { type: string }
+        allow_photo_gps: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: [string, 'null'], format: date-time }
+        server_version: { type: integer, format: int64 }
+
+    PermitHealth:
+      type: string
+      enum: [OK, WARN, EXPIRED, NONE]
+      description: Worst permit status in the project (NONE = no permits)
+
+    ProjectSummary:
+      type: object
+      description: Portfolio Bento card
+      required: [project, today, permit_health, open_blockers_count]
+      properties:
+        project: { $ref: '#/components/schemas/Project' }
+        today:
+          type: object
+          required: [log_date, labor_max, log_count]
+          properties:
+            log_date: { type: string, format: date, description: Today in project timezone }
+            labor_max: { type: [integer, 'null'] }
+            log_count: { type: integer }
+            last_log_at: { type: [string, 'null'], format: date-time }
+        permit_health: { $ref: '#/components/schemas/PermitHealth' }
+        next_expiring_permit:
+          oneOf:
+            - $ref: '#/components/schemas/Permit'
+            - type: 'null'
+        open_blockers_count: { type: integer, description: Distinct blockers in today's logs }
+
+    Member:
+      type: object
+      required: [project_id, user_id, role, full_name, email, server_version]
+      properties:
+        project_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        role: { $ref: '#/components/schemas/Role' }
+        full_name: { type: string }
+        email: { type: string, format: email }
+        deleted_at: { type: [string, 'null'], format: date-time }
+        server_version: { type: integer, format: int64 }
+
+    PermitStatus:
+      type: string
+      enum: [ACTIVE, EXPIRING_SOON, EXPIRED]
+      description: Derived from expiry_date vs project-local today; EXPIRING_SOON = within 14 days. Never stored.
+
+    PermitInput:
+      type: object
+      required: [permit_name, authority, expiry_date]
+      properties:
+        permit_name: { type: string, minLength: 1 }
+        authority: { type: string, minLength: 1 }
+        permit_number: { type: [string, 'null'] }
+        issue_date: { type: [string, 'null'], format: date }
+        expiry_date: { type: string, format: date }
+        document_photo_uri: { type: [string, 'null'] }
+
+    PermitPatch:
+      type: object
+      properties:
+        permit_name: { type: string, minLength: 1 }
+        authority: { type: string, minLength: 1 }
+        permit_number: { type: [string, 'null'] }
+        issue_date: { type: [string, 'null'], format: date }
+        expiry_date: { type: string, format: date }
+        document_photo_uri: { type: [string, 'null'] }
+
+    Permit:
+      type: object
+      required: [id, project_id, permit_name, authority, expiry_date, status, days_to_expiry, created_by, created_at, updated_at, server_version]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        permit_name: { type: string }
+        authority: { type: string }
+        permit_number: { type: [string, 'null'] }
+        issue_date: { type: [string, 'null'], format: date }
+        expiry_date: { type: string, format: date }
+        status: { $ref: '#/components/schemas/PermitStatus' }
+        days_to_expiry: { type: integer, description: Negative when expired }
+        document_photo_uri: { type: [string, 'null'] }
+        document_photo_url: { type: [string, 'null'], description: Signed GET URL (1h) — web convenience; not in sync pull }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: [string, 'null'], format: date-time }
+        server_version: { type: integer, format: int64 }
+
+    PermitPush:
+      type: object
+      description: Client-owned permit fields. Mobile re-derives status locally from expiry_date.
+      required: [id, project_id, permit_name, authority, expiry_date, client_updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        permit_name: { type: string, minLength: 1 }
+        authority: { type: string, minLength: 1 }
+        permit_number: { type: [string, 'null'] }
+        issue_date: { type: [string, 'null'], format: date }
+        expiry_date: { type: string, format: date }
+        document_photo_uri: { type: [string, 'null'] }
+        deleted_at: { type: [string, 'null'], format: date-time }
+        client_updated_at: { type: string, format: date-time }
+
+    ExtractionStatus:
+      type: string
+      enum: [NOT_STARTED, PENDING, PROCESSING, DONE, FAILED]
+
+    StructuredSummary:
+      type: object
+      description: English-normalised extraction (also the Gemini response_schema)
+      required: [tasks_completed, labor_count, material_deliveries, blockers]
+      properties:
+        tasks_completed: { type: array, items: { type: string } }
+        labor_count: { type: [integer, 'null'], minimum: 0 }
+        material_deliveries: { type: array, items: { type: string } }
+        blockers: { type: array, items: { type: string } }
+
+    SiteLogPush:
+      type: object
+      description: |
+        Client-owned site_log fields. Send structured_summary ONLY together with
+        edited_by_human=true (a human correction); otherwise omit it. audio_upload_status is
+        set to PENDING by the server whenever a non-null audio_uri arrives for a log that is
+        not already UPLOADED for that same URI.
+      required: [id, project_id, log_date, recorded_at, client_updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        log_date: { type: string, format: date }
+        recorded_at: { type: string, format: date-time }
+        notes: { type: [string, 'null'], maxLength: 4000 }
+        audio_uri: { type: [string, 'null'] }
+        audio_duration_ms: { type: [integer, 'null'], minimum: 0, maximum: 300000 }
+        structured_summary:
+          oneOf:
+            - $ref: '#/components/schemas/StructuredSummary'
+            - type: 'null'
+        edited_by_human: { type: boolean, default: false }
+        deleted_at: { type: [string, 'null'], format: date-time }
+        client_updated_at: { type: string, format: date-time }
+
+    SiteLog:
+      type: object
+      required: [id, project_id, author_id, log_date, recorded_at, audio_upload_status, extraction_status, extraction_attempts, edited_by_human, client_updated_at, created_at, updated_at, server_version]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        author_id: { type: string, format: uuid }
+        author_name: { type: [string, 'null'] }
+        log_date: { type: string, format: date }
+        recorded_at: { type: string, format: date-time }
+        notes: { type: [string, 'null'] }
+        audio_uri: { type: [string, 'null'] }
+        audio_duration_ms: { type: [integer, 'null'] }
+        audio_upload_status: { type: string, enum: [NONE, PENDING, UPLOADED] }
+        extraction_status: { $ref: '#/components/schemas/ExtractionStatus' }
+        extraction_attempts: { type: integer }
+        extraction_error: { type: [string, 'null'] }
+        extraction_model: { type: [string, 'null'] }
+        extracted_at: { type: [string, 'null'], format: date-time }
+        transcript: { type: [string, 'null'] }
+        detected_language: { type: [string, 'null'], enum: [ur, en, ar, mixed, unknown, null] }
+        structured_summary:
+          oneOf:
+            - $ref: '#/components/schemas/StructuredSummary'
+            - type: 'null'
+        edited_by_human: { type: boolean }
+        photos:
+          type: array
+          description: Present on REST read endpoints (with signed `url`); omitted in sync pull (photos sync as their own entity)
+          items: { $ref: '#/components/schemas/SiteLogPhoto' }
+        client_updated_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: [string, 'null'], format: date-time }
+        server_version: { type: integer, format: int64 }
+
+    SiteLogPhotoPush:
+      type: object
+      required: [id, site_log_id, storage_uri]
+      properties:
+        id: { type: string, format: uuid }
+        site_log_id: { type: string, format: uuid }
+        storage_uri: { type: string }
+        width: { type: [integer, 'null'] }
+        height: { type: [integer, 'null'] }
+        byte_size: { type: [integer, 'null'] }
+        taken_at: { type: [string, 'null'], format: date-time }
+        sort_order: { type: integer, default: 0 }
+        deleted_at: { type: [string, 'null'], format: date-time }
+
+    SiteLogPhoto:
+      type: object
+      required: [id, site_log_id, storage_uri, upload_status, sort_order, server_version]
+      properties:
+        id: { type: string, format: uuid }
+        site_log_id: { type: string, format: uuid }
+        storage_uri: { type: string }
+        upload_status: { type: string, enum: [PENDING, UPLOADED] }
+        url: { type: [string, 'null'], description: Signed GET URL (1h); REST reads only, null in sync pull or if not UPLOADED }
+        width: { type: [integer, 'null'] }
+        height: { type: [integer, 'null'] }
+        byte_size: { type: [integer, 'null'] }
+        taken_at: { type: [string, 'null'], format: date-time }
+        sort_order: { type: integer }
+        deleted_at: { type: [string, 'null'], format: date-time }
+        server_version: { type: integer, format: int64 }
+
+    DailyReport:
+      type: object
+      description: |
+        Aggregation of all non-deleted logs for (project, log_date).
+        labor_max = MAX(labor_count) over logs with a non-null count (NOT a sum — avoids
+        double-counting the same crew across notes). Lists are concatenated in recorded_at
+        order and de-duplicated case-insensitively after trimming.
+      required: [project_id, log_date, labor_max, log_count, tasks_completed, material_deliveries, blockers, logs, pending_extraction_count]
+      properties:
+        project_id: { type: string, format: uuid }
+        project_name: { type: string }
+        log_date: { type: string, format: date }
+        labor_max: { type: [integer, 'null'] }
+        log_count: { type: integer }
+        pending_extraction_count: { type: integer, description: Logs not yet DONE (PDF shows a notice when > 0) }
+        tasks_completed: { type: array, items: { type: string } }
+        material_deliveries: { type: array, items: { type: string } }
+        blockers: { type: array, items: { type: string } }
+        logs:
+          type: array
+          description: Per-note breakdown in recorded_at order, each including photos with signed URLs
+          items: { $ref: '#/components/schemas/SiteLog' }
+        permits:
+          type: array
+          description: Snapshot of project permits for the report header
+          items: { $ref: '#/components/schemas/Permit' }
+
+    MediaKind:
+      type: string
+      enum: [AUDIO, PHOTO, PERMIT_DOC]
+
+    UploadTicket:
+      type: object
+      required: [upload_url, method, headers, storage_uri, expires_at]
+      properties:
+        upload_url: { type: string }
+        method: { type: string, enum: [PUT] }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+          description: Headers the client MUST send with the PUT (e.g. Content-Type)
+        storage_uri: { type: string, description: "gs://bucket/key or local://key" }
+        expires_at: { type: string, format: date-time }

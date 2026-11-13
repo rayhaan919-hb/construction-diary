@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_canvas">#F8FAFC</color>
+    <color name="bg_surface">#FFFFFF</color>
+    <color name="accent_primary">#D97706</color>
+</resources>

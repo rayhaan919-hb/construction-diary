@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: site_diary
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d site_diary"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Optional local GCS emulator for testing GCS signed URLs locally
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.49
+    command: ["-scheme", "http", "-port", "4443", "-external-url", "http://localhost:4443"]
+    ports:
+      - "4443:4443"
+    profiles: ["gcs"]
+
+  api:
+    build:
+      context: ./services/api
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/site_diary
+      STORAGE_BACKEND: local
+      PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - api_storage:/app/.storage
+
+  web:
+    build:
+      context: ./apps/web
+    environment:
+      API_BASE_URL: http://api:8000
+      SESSION_COOKIE_SECURE: "false"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  api_storage:

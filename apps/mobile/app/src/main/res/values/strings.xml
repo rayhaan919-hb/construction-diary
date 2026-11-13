@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Site Diary</string>
+
+    <!-- Language & Common -->
+    <string name="lang_en">EN</string>
+    <string name="lang_ur">اردو</string>
+    <string name="retry">Retry</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="back">Back</string>
+    <string name="close">Close</string>
+    <string name="sync_now">Sync Now</string>
+    <string name="offline_badge">Offline</string>
+    <string name="pending_sync_count">%1$d pending</string>
+    <string name="all_synced">All synced</string>
+    <string name="syncing">Syncing…</string>
+    <string name="sync_error_prefix">Sync issue: %1$s</string>
+
+    <!-- Auth -->
+    <string name="login_title">Site Diary Sign In</string>
+    <string name="login_subtitle">Offline-first daily logs &amp; permit tracker</string>
+    <string name="email_label">Email Address</string>
+    <string name="password_label">Password</string>
+    <string name="sign_in">Sign In</string>
+    <string name="signing_in">Signing In…</string>
+    <string name="login_error_invalid">Invalid email or password</string>
+    <string name="login_error_network">Cannot reach server. Check your connection.</string>
+
+    <string name="change_password_title">Update Password</string>
+    <string name="change_password_subtitle">For security, please replace your temporary password before continuing.</string>
+    <string name="current_password_label">Current Password</string>
+    <string name="new_password_label">New Password (min 8 chars)</string>
+    <string name="confirm_password_label">Confirm New Password</string>
+    <string name="update_password_cta">Save Password</string>
+    <string name="password_mismatch">New passwords do not match</string>
+    <string name="password_too_short">Password must be at least 8 characters</string>
+
+    <!-- Projects List -->
+    <string name="projects_title">My Sites</string>
+    <string name="sign_out">Sign Out</string>
+    <string name="mobile_data_upload_label">Upload audio &amp; photos on mobile data</string>
+    <string name="mobile_data_upload_hint">Off = Wi-Fi only (saves mobile data)</string>
+    <string name="projects_empty_title">No projects assigned yet</string>
+    <string name="projects_empty_desc">Ask your project owner to add you as a site supervisor, then tap Sync.</string>
+    <string name="permit_health_ok">Permits OK</string>
+    <string name="permit_health_warn">Permit Expiring</string>
+    <string name="permit_health_expired">Permit Expired</string>
+    <string name="permit_health_none">No Permits</string>
+    <string name="today_logs_count">%1$d logs today</string>
+    <string name="today_labor_count">Crew: %1$d</string>
+    <string name="today_labor_none">Crew: --</string>
+
+    <!-- Project Diary -->
+    <string name="diary_title">Site Diary</string>
+    <string name="record_site_note_cta">Record Site Note</string>
+    <string name="permits_button">Permits</string>
+    <string name="today_summary_header">Today (%1$s)</string>
+    <string name="diary_empty_title">No site notes recorded yet</string>
+    <string name="diary_empty_desc">Tap Record Site Note to capture voice updates and site photos offline.</string>
+    <string name="permit_banner_expired_single">1 permit EXPIRED: %1$s (%2$d days)</string>
+    <string name="permit_banner_expired_multi">%1$d permits EXPIRED • Next: %2$s</string>
+    <string name="permit_banner_expiring_single">Permit expires in %1$d days: %2$s</string>
+    <string name="permit_banner_expiring_multi">%1$d permits expiring soon • Next: %2$s (%3$d days)</string>
+    <string name="view_permits">View Permits</string>
+
+    <!-- Extraction & Upload Statuses -->
+    <string name="status_synced">Synced</string>
+    <string name="status_pending_push">Pending Sync</string>
+    <string name="media_pending">Media Queued</string>
+    <string name="media_uploaded">Media Uploaded</string>
+    <string name="extraction_not_started">No Audio</string>
+    <string name="extraction_pending">AI Queued</string>
+    <string name="extraction_processing">AI Extracting…</string>
+    <string name="extraction_done">AI Ready</string>
+    <string name="extraction_failed">AI Failed</string>
+    <string name="edited_by_human_badge">Supervisor Edited</string>
+
+    <!-- Record Site Note -->
+    <string name="record_note_title">Record Site Note</string>
+    <string name="audio_section_title">Voice Update (M4A • max 5:00)</string>
+    <string name="start_recording">Start Voice Recording</string>
+    <string name="stop_recording">Stop Recording</string>
+    <string name="rerecord_audio">Re-record</string>
+    <string name="delete_audio">Remove Audio</string>
+    <string name="audio_recorded_label">Recorded: %1$s</string>
+    <string name="photos_section_title">Site Photos (%1$d)</string>
+    <string name="open_camera">Take Site Photo</string>
+    <string name="capture_photo">Capture Photo</string>
+    <string name="close_camera">Done Camera</string>
+    <string name="gps_strip_notice">Location metadata stripped (project policy)</string>
+    <string name="gps_keep_notice">Photo GPS enabled by project policy</string>
+    <string name="typed_note_label">Typed Field Note (Optional)</string>
+    <string name="typed_note_hint">Add weather, deliveries, safety notes, or blockers…</string>
+    <string name="save_note_offline">Save Note Offline</string>
+    <string name="permission_audio_needed">Microphone permission is required to record voice notes.</string>
+    <string name="permission_camera_needed">Camera permission is required to take site photos.</string>
+    <string name="grant_permission">Grant Permission</string>
+    <string name="record_validation_empty">Record audio, take a photo, or enter a note before saving.</string>
+
+    <!-- Log Detail & Edit -->
+    <string name="log_detail_title">Site Note Detail</string>
+    <string name="play_audio">Play Voice Note</string>
+    <string name="stop_audio">Stop Playback</string>
+    <string name="retry_ai_extraction">Retry AI Extraction</string>
+    <string name="transcript_section">Voice Transcript (%1$s)</string>
+    <string name="no_transcript_yet">Transcript will appear after audio uploads and AI extraction completes.</string>
+    <string name="summary_section">Structured Daily Summary</string>
+    <string name="tasks_completed_label">Tasks Completed (one per line)</string>
+    <string name="labor_count_label">Total Crew / Labor Count</string>
+    <string name="materials_label">Material Deliveries (one per line)</string>
+    <string name="blockers_label">Blockers / Delays (one per line)</string>
+    <string name="save_human_edits">Save Corrections</string>
+    <string name="saved_for_sync">Saved locally — queued for sync</string>
+
+    <!-- Permits -->
+    <string name="permits_title">Site Permits</string>
+    <string name="add_permit_cta">Add Permit</string>
+    <string name="permits_empty_title">No permits recorded</string>
+    <string name="permits_empty_desc">Add municipal, safety, or environmental permits to track expiry offline.</string>
+    <string name="permit_status_active">ACTIVE</string>
+    <string name="permit_status_expiring">EXPIRING SOON</string>
+    <string name="permit_status_expired">EXPIRED</string>
+    <string name="permit_days_remaining">%1$d days left</string>
+    <string name="permit_days_overdue">%1$d days overdue</string>
+    <string name="permit_expires_today">Expires today</string>
+    <string name="permit_name_label">Permit Name *</string>
+    <string name="permit_authority_label">Issuing Authority *</string>
+    <string name="permit_number_label">Permit Number</string>
+    <string name="permit_issue_date_label">Issue Date (YYYY-MM-DD)</string>
+    <string name="permit_expiry_date_label">Expiry Date * (YYYY-MM-DD)</string>
+    <string name="attach_permit_photo">Capture Permit Document</string>
+    <string name="permit_photo_attached">Document Photo Attached</string>
+    <string name="permit_validation_required">Permit name, authority, and valid YYYY-MM-DD expiry date are required.</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_name">Permit &amp; Sync Alerts</string>
+    <string name="notification_channel_desc">Permit expiry reminders and AI extraction status alerts</string>
+</resources>
