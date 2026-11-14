@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import pgserver
+import pgserver._commands as pg_commands
+import pgserver.postgres_server as pg_server_mod
 import pytest
 import tzdata
 from alembic.config import Config
@@ -26,16 +28,44 @@ from app.services.auth import hash_password
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _ensure_pgserver_tzdata() -> None:
-    """Ensure pgserver has IANA TZif files (missing from pgserver 0.1.4 Windows wheel)."""
-    pg_share = (
-        Path(pgserver.__file__).resolve().parent / "pginstall" / "share" / "postgresql"
+def _ensure_non_root_for_embedded_pg() -> None:
+    """Fail cleanly when running embedded Postgres as root without TEST_DATABASE_URL."""
+    geteuid = getattr(os, "geteuid", None)
+    if callable(geteuid) and geteuid() == 0:
+        pytest.fail(
+            "Embedded Postgres (pgserver) cannot run as root. "
+            "Run pytest as a non-root user, or set TEST_DATABASE_URL to an external Postgres.",
+            pytrace=False,
+        )
+
+
+def _prepare_pgserver_install(
+    tmp_root: Path,
+    pg_install_dir: Path | None = None,
+    tz_source_dir: Path | None = None,
+) -> Path | None:
+    """Stage pginstall + tzdata in tmp when timezone files are missing."""
+    install_dir = pg_install_dir or (
+        Path(pgserver.__file__).resolve().parent / "pginstall"
     )
-    pg_tz_dir = pg_share / "timezone"
-    if pg_share.is_dir() and not pg_tz_dir.exists():
-        src_tz_dir = Path(tzdata.__file__).resolve().parent / "zoneinfo"
-        if src_tz_dir.is_dir():
-            shutil.copytree(src_tz_dir, pg_tz_dir, dirs_exist_ok=True)
+    pg_tz_dir = install_dir / "share" / "postgresql" / "timezone"
+    if pg_tz_dir.is_dir():
+        return None
+
+    staged_install = tmp_root / "pginstall"
+    for subdir in ("bin", "lib", "share"):
+        src = install_dir / subdir
+        if src.is_dir():
+            shutil.copytree(src, staged_install / subdir, dirs_exist_ok=True)
+
+    tz_src = tz_source_dir or (Path(tzdata.__file__).resolve().parent / "zoneinfo")
+    if tz_src.is_dir():
+        shutil.copytree(
+            tz_src,
+            staged_install / "share" / "postgresql" / "timezone",
+            dirs_exist_ok=True,
+        )
+    return staged_install
 
 
 @pytest.fixture(scope="session")
@@ -45,14 +75,30 @@ def pg_uri(tmp_path_factory: pytest.TempPathFactory) -> Generator[str, None, Non
         yield external_url
         return
 
-    _ensure_pgserver_tzdata()
+    _ensure_non_root_for_embedded_pg()
+
+    server_mod: Any = pg_server_mod
+    orig_cmd_bin: Any = pg_commands.POSTGRES_BIN_PATH
+    orig_srv_bin: Any = server_mod.POSTGRES_BIN_PATH
+    staged_install = _prepare_pgserver_install(
+        tmp_path_factory.mktemp("pgserver_runtime")
+    )
+    if staged_install is not None:
+        staged_bin = staged_install / "bin"
+        pg_commands.POSTGRES_BIN_PATH = staged_bin
+        server_mod.POSTGRES_BIN_PATH = staged_bin
+
     pgdata = tmp_path_factory.mktemp("pgserver_data")
     server = get_server(pgdata, cleanup_mode="stop")
     try:
         yield server.get_uri()
     finally:
-        with contextlib.suppress(OSError):
-            server.cleanup()
+        try:
+            with contextlib.suppress(OSError):
+                server.cleanup()
+        finally:
+            pg_commands.POSTGRES_BIN_PATH = orig_cmd_bin
+            server_mod.POSTGRES_BIN_PATH = orig_srv_bin
 
 
 @pytest.fixture(scope="session")

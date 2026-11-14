@@ -3,6 +3,7 @@ name = "site-diary-api"
 version = "1.0.0"
 description = "Construction Permit & Site Diary FastAPI Backend"
 readme = "README.md"
+license = { text = "Proprietary - All Rights Reserved" }
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic>=1.14.0,<2.0",
@@ -20,6 +21,14 @@ dependencies = [
   "sqlalchemy>=2.0.35,<2.1",
   "tzdata>=2024.1",
   "uvicorn[standard]>=0.32.0,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.13.0",
+  "pgserver>=0.1.4",
+  "pytest>=8.3.0",
+  "ruff>=0.8.0",
 ]
 
 [dependency-groups]

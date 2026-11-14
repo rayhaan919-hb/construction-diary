@@ -38,3 +38,6 @@ Monorepo implementing an offline-first construction site diary, permit expiry co
    ```
 
 See [DEPLOY.md](DEPLOY.md) for Cloud Run, Cloud SQL, GCS, and Cloud Scheduler deployment instructions.
+
+## License
+Proprietary — All Rights Reserved. See [LICENSE](LICENSE) for licensing terms.

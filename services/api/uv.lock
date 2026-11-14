@@ -993,6 +993,14 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 
+[package.optional-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pgserver" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
@@ -1011,14 +1019,19 @@ requires-dist = [
     { name = "google-cloud-storage", specifier = ">=2.18.0,<4.0" },
     { name = "google-genai", specifier = ">=1.0.0,<2.0" },
     { name = "httpx", specifier = ">=0.27.0,<1.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13.0" },
+    { name = "pgserver", marker = "extra == 'dev'", specifier = ">=0.1.4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0,<4.0" },
     { name = "pydantic", specifier = ">=2.9.0,<3.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0,<3.0" },
     { name = "pyjwt", specifier = ">=2.9.0,<3.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sqlalchemy", specifier = ">=2.0.35,<2.1" },
     { name = "tzdata", specifier = ">=2024.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0,<1.0" },
 ]
+provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
