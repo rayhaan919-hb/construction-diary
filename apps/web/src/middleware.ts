@@ -3,6 +3,7 @@ import {
   ACCESS_COOKIE_NAME,
   MUST_CHANGE_COOKIE_NAME,
   REFRESH_COOKIE_NAME,
+  isDemoMode,
 } from "@/lib/config";
 import { isJwtExpiredOrExpiring } from "@/lib/jwt";
 import {
@@ -15,6 +16,10 @@ import { refreshWithBackend } from "@/lib/auth-refresh";
 const PUBLIC_PATHS = new Set(["/login"]);
 
 export async function middleware(req: NextRequest) {
+  if (isDemoMode()) {
+    return NextResponse.next();
+  }
+
   const { pathname, search } = req.nextUrl;
 
   const accessToken = req.cookies.get(ACCESS_COOKIE_NAME)?.value;

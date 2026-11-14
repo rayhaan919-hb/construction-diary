@@ -15,9 +15,10 @@ Monorepo implementing an offline-first construction site diary, permit expiry co
    - Or run tests directly offline using embedded Postgres (`pgserver`):
      ```bash
      cd services/api
-     uv sync
-     uv run ruff check . && uv run mypy . && uv run pytest
+     uv sync --locked --dev
+     uv run ruff check . && uv run mypy . && uv run pytest -q
      ```
+   - Alternatively, with `pip`: `pip install -r services/api/requirements-dev.txt` (kept in sync with `services/api/pyproject.toml`).
    - Migrate & seed:
      ```bash
      uv run alembic upgrade head
@@ -28,14 +29,16 @@ Monorepo implementing an offline-first construction site diary, permit expiry co
    ```bash
    cd apps/web
    npm install
-   npm run typecheck && npm run lint && npm run build
+   npm run typecheck && npm run lint && npm test && npm run build
    npm run dev
    ```
+   - **Standalone Demo Preview (no FastAPI/Postgres required):** set `NEXT_PUBLIC_DEMO_MODE=true` (see `.env.example`) and run `npm run dev` to preview seeded projects, bilingual EN/UR daily logs with weather & photos, permit expiry badges, and 1-click PDF report export.
 4. **Mobile (`/apps/mobile`)**:
    ```bash
    cd apps/mobile
    ./gradlew testDebugUnitTest
    ```
+   - Firebase push alerts (`apps/mobile/app/google-services.json`) are optional for local development and CI; when absent, the Gradle plugin stays disabled and `FcmTokenManager` logs a warning and skips registration without crashing. See [DEPLOY.md](DEPLOY.md#8-mobile-appsmobile) for production FCM setup.
 
 See [DEPLOY.md](DEPLOY.md) for Cloud Run, Cloud SQL, GCS, and Cloud Scheduler deployment instructions.
 

@@ -3,6 +3,7 @@ import {
   ACCESS_COOKIE_NAME,
   REFRESH_COOKIE_NAME,
   getApiBaseUrl,
+  isDemoMode,
 } from "@/lib/config";
 import { clearAuthCookies } from "@/lib/auth-cookies";
 
@@ -10,7 +11,7 @@ export async function POST(req: NextRequest) {
   const accessToken = req.cookies.get(ACCESS_COOKIE_NAME)?.value;
   const refreshToken = req.cookies.get(REFRESH_COOKIE_NAME)?.value;
 
-  if (refreshToken) {
+  if (!isDemoMode() && refreshToken) {
     try {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",

@@ -13,3 +13,7 @@ export function getApiBaseUrl(): string {
 export function isSessionCookieSecure(): boolean {
   return process.env.SESSION_COOKIE_SECURE === "true";
 }
+
+export function isDemoMode(): boolean {
+  return process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+}

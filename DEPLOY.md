@@ -82,5 +82,5 @@ gcloud scheduler jobs create http permit-alerts-daily \
 ```
 
 ## 8. Mobile (`apps/mobile`)
-1. Place Firebase `google-services.json` in `apps/mobile/app/google-services.json` to enable FCM push alerts (the build automatically enables the Google Services Gradle plugin when that file exists).
+1. Place Firebase `google-services.json` in `apps/mobile/app/google-services.json` to enable FCM push alerts (`apps/mobile/app/build.gradle.kts` conditionally applies `com.google.gms.google-services` only when that file exists). If `google-services.json` is omitted (e.g., local evaluation or CI builds), the app compiles and runs cleanly while `FcmTokenManager` logs a warning and skips FCM registration.
 2. Configure release `API_BASE_URL` pointing to the Cloud Run API URL.

@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronRight, HardHat, KeyRound, LogOut } from "lucide-react";
+import { isDemoMode } from "@/lib/config";
 
 interface PortalHeaderProps {
   user?: {
@@ -73,6 +74,12 @@ export function PortalHeader({ user, projectBreadcrumb }: PortalHeaderProps) {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {isDemoMode() && (
+            <span className="rounded border border-[#F59E0B] bg-[#FFFBEB] px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-[#92400E]">
+              Demo Preview
+            </span>
+          )}
+
           {user && (
             <div className="hidden md:flex items-center gap-2 rounded border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1">
               <span className="text-xs font-medium text-[#0F172A]">

@@ -4,7 +4,9 @@ import {
   ACCESS_COOKIE_NAME,
   REFRESH_COOKIE_NAME,
   getApiBaseUrl,
+  isDemoMode,
 } from "./config";
+import { handleDemoBackendRequest } from "./demo-data";
 import { isJwtExpiredOrExpiring } from "./jwt";
 import { ApiError, parseErrorResponse } from "./problem";
 import {
@@ -63,6 +65,17 @@ export async function serverApiFetch<T>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
+  if (isDemoMode()) {
+    const demoRes = await handleDemoBackendRequest(path, init);
+    if (!demoRes.ok) {
+      throw await parseErrorResponse(demoRes);
+    }
+    if (demoRes.status === 204) {
+      return undefined as T;
+    }
+    return (await demoRes.json()) as T;
+  }
+
   const cookieStore = await cookies();
   const accessToken = cookieStore.get(ACCESS_COOKIE_NAME)?.value;
   const hasRefreshToken = Boolean(cookieStore.get(REFRESH_COOKIE_NAME)?.value);
@@ -135,6 +148,15 @@ export async function fetchBackendWithAuth(
   init: RequestInit = {},
   tokenOverride?: string
 ): Promise<BackendAuthFetchOutcome> {
+  if (isDemoMode()) {
+    const demoRes = await handleDemoBackendRequest(backendPathWithQuery, init);
+    return {
+      response: demoRes,
+      refreshedTokens: null,
+      shouldClearCookies: false,
+    };
+  }
+
   let accessToken = tokenOverride ?? req.cookies.get(ACCESS_COOKIE_NAME)?.value;
   const refreshToken = req.cookies.get(REFRESH_COOKIE_NAME)?.value;
   let refreshedTokens: RefreshedTokenPair | null = null;

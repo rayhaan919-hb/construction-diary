@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getApiBaseUrl } from "@/lib/config";
+import { getApiBaseUrl, isDemoMode } from "@/lib/config";
 import { setAuthCookies } from "@/lib/auth-cookies";
 import type { RefreshedTokenPair } from "@/lib/auth-refresh";
+import { createDemoTokenPair } from "@/lib/demo-data";
 
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -24,6 +25,17 @@ export async function POST(req: NextRequest) {
     body && typeof body === "object"
       ? { ...(body as Record<string, unknown>), device_label: "web" }
       : { device_label: "web" };
+
+  if (isDemoMode()) {
+    const email =
+      "email" in payload && typeof payload.email === "string"
+        ? payload.email
+        : undefined;
+    const tokens = createDemoTokenPair(email);
+    const res = NextResponse.json({ user: tokens.user }, { status: 200 });
+    setAuthCookies(res, tokens);
+    return res;
+  }
 
   let upstream: Response;
   try {
