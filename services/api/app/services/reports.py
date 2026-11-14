@@ -47,7 +47,10 @@ def serialize_permit(
 ) -> PermitResponse:
     signed_url: str | None = None
     if include_signed_url and row.document_photo_uri:
-        signed_url = storage.sign_get_url(row.document_photo_uri, ttl_seconds=3600)
+        try:
+            signed_url = storage.sign_get_url(row.document_photo_uri, ttl_seconds=3600)
+        except ValueError:
+            signed_url = None
     return PermitResponse(
         id=row.id,
         project_id=row.project_id,
@@ -60,6 +63,8 @@ def serialize_permit(
         days_to_expiry=row.days_to_expiry,
         document_photo_uri=row.document_photo_uri,
         document_photo_url=signed_url,
+        document_upload_status=getattr(row, "document_upload_status", "NONE"),
+        ai_extracted_data=getattr(row, "ai_extracted_data", None),
         created_by=row.created_by,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -75,7 +80,10 @@ def serialize_photo(
 ) -> SiteLogPhotoResponse:
     url: str | None = None
     if include_signed_url and photo.upload_status == "UPLOADED":
-        url = storage.sign_get_url(photo.storage_uri, ttl_seconds=3600)
+        try:
+            url = storage.sign_get_url(photo.storage_uri, ttl_seconds=3600)
+        except ValueError:
+            url = None
     return SiteLogPhotoResponse(
         id=photo.id,
         site_log_id=photo.site_log_id,
@@ -87,6 +95,8 @@ def serialize_photo(
         byte_size=photo.byte_size,
         taken_at=photo.taken_at,
         sort_order=photo.sort_order,
+        ai_caption=photo.ai_caption,
+        ai_labels=photo.ai_labels,
         deleted_at=photo.deleted_at,
         server_version=photo.server_version,
     )
@@ -98,10 +108,31 @@ def _parse_summary(raw: dict[str, object] | None) -> StructuredSummary | None:
     return StructuredSummary.model_validate(raw)
 
 
+def _sign_audio_url(
+    log: SiteLog,
+    storage: MediaStorageService | None,
+    include_signed_url: bool,
+) -> str | None:
+    if (
+        not include_signed_url
+        or storage is None
+        or not log.audio_uri
+        or log.audio_upload_status != "UPLOADED"
+    ):
+        return None
+    try:
+        return storage.sign_get_url(log.audio_uri, ttl_seconds=3600)
+    except ValueError:
+        return None
+
+
 def serialize_site_log(
     log: SiteLog,
     author_name: str | None,
     photos: list[SiteLogPhotoResponse],
+    storage: MediaStorageService | None = None,
+    *,
+    include_signed_url: bool = True,
 ) -> SiteLogResponse:
     return SiteLogResponse(
         id=log.id,
@@ -112,6 +143,7 @@ def serialize_site_log(
         recorded_at=log.recorded_at,
         notes=log.notes,
         audio_uri=log.audio_uri,
+        audio_url=_sign_audio_url(log, storage, include_signed_url),
         audio_duration_ms=log.audio_duration_ms,
         audio_upload_status=cast(AudioUploadStatus, log.audio_upload_status),
         extraction_status=cast(ExtractionStatus, log.extraction_status),
@@ -135,6 +167,7 @@ def serialize_site_log(
 def serialize_site_log_pull(
     log: SiteLog,
     author_name: str | None,
+    storage: MediaStorageService | None = None,
 ) -> SiteLogPullResponse:
     return SiteLogPullResponse(
         id=log.id,
@@ -145,6 +178,7 @@ def serialize_site_log_pull(
         recorded_at=log.recorded_at,
         notes=log.notes,
         audio_uri=log.audio_uri,
+        audio_url=_sign_audio_url(log, storage, True) if storage is not None else None,
         audio_duration_ms=log.audio_duration_ms,
         audio_upload_status=cast(AudioUploadStatus, log.audio_upload_status),
         extraction_status=cast(ExtractionStatus, log.extraction_status),
@@ -228,7 +262,7 @@ def build_daily_reports_for_dates(
     logs_by_date: dict[date, list[SiteLogResponse]] = defaultdict(list)
     for log, author_name in log_rows:
         logs_by_date[log.log_date].append(
-            serialize_site_log(log, author_name, photos_by_log[log.id])
+            serialize_site_log(log, author_name, photos_by_log[log.id], storage)
         )
 
     reports: list[DailyReportResponse] = []

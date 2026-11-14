@@ -9,13 +9,23 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
-from app.db.models import Permit, Project, ProjectMember, SiteLog, User
+from app.db.models import (
+    Organization,
+    OrganizationMember,
+    Permit,
+    Project,
+    ProjectMember,
+    SiteLog,
+    User,
+)
 from app.db.session import create_session_factory
 from app.services.auth import hash_password
+from app.services.saas import apply_plan_quotas
 
 logger = logging.getLogger(__name__)
 
 SEED_NAMESPACE = uuid.UUID("72424200-0000-4000-8000-000000000001")
+SEED_ORG_ID = uuid.uuid5(SEED_NAMESPACE, "organization.default-org")
 SEED_PROJECT_ID = uuid.uuid5(SEED_NAMESPACE, "project.clifton-tower-phase-2")
 SEED_PERMIT_ACTIVE_ID = uuid.uuid5(SEED_NAMESPACE, "permit.excavation-noc")
 SEED_PERMIT_WARN_ID = uuid.uuid5(SEED_NAMESPACE, "permit.tower-crane")
@@ -24,8 +34,27 @@ SEED_LOG_TODAY_ID = uuid.uuid5(SEED_NAMESPACE, "log.today-pouring")
 SEED_LOG_YESTERDAY_ID = uuid.uuid5(SEED_NAMESPACE, "log.yesterday-rebar")
 
 
+def _upsert_seed_org(db: Session) -> Organization:
+    org = db.scalar(select(Organization).where(Organization.slug == "default-org"))
+    if org is None:
+        org = Organization(
+            id=SEED_ORG_ID,
+            name="Default Construction Org",
+            slug="default-org",
+            status="ACTIVE",
+            subscription_status="ACTIVE",
+            billing_month=datetime.now(UTC).strftime("%Y-%m"),
+        )
+        apply_plan_quotas(org, "PRO")
+        db.add(org)
+        db.flush()
+    return org
+
+
 def _upsert_seed_user(
     db: Session,
+    *,
+    organization_id: uuid.UUID,
     email: str,
     password: str,
     full_name: str,
@@ -37,15 +66,28 @@ def _upsert_seed_user(
     )
     if user is None:
         user = User(
+            organization_id=organization_id,
             email=normalized,
             password_hash=hash_password(password),
             full_name=full_name,
             role=role,
+            status="ACTIVE",
             preferred_locale="en",
             must_change_password=False,
         )
         db.add(user)
         db.flush()
+    elif user.organization_id is None:
+        user.organization_id = organization_id
+
+    if db.get(OrganizationMember, (organization_id, user.id)) is None:
+        db.add(
+            OrganizationMember(
+                organization_id=organization_id,
+                user_id=user.id,
+                role=role,
+            )
+        )
     return user
 
 
@@ -71,16 +113,31 @@ def _ensure_membership(
 
 def seed_database(db: Session, settings: Settings | None = None) -> None:
     cfg = settings or get_settings()
+    if cfg.is_deployed_env or not cfg.ENABLE_DEV_SEED:
+        raise RuntimeError(
+            "Database seeding is disabled outside development/test with ENABLE_DEV_SEED=true."
+        )
+    if not cfg.SEED_OWNER_PASSWORD.strip() or not cfg.SEED_SUPERVISOR_PASSWORD.strip():
+        raise RuntimeError(
+            "SEED_OWNER_PASSWORD and SEED_SUPERVISOR_PASSWORD must be explicitly configured "
+            "before running seed_database."
+        )
 
+    org = _upsert_seed_org(db)
     owner = _upsert_seed_user(
         db=db,
+        organization_id=org.id,
         email=cfg.SEED_OWNER_EMAIL,
         password=cfg.SEED_OWNER_PASSWORD,
         full_name="Tariq Mehmood",
         role="OWNER",
     )
+    if org.created_by is None:
+        org.created_by = owner.id
+
     supervisor = _upsert_seed_user(
         db=db,
+        organization_id=org.id,
         email=cfg.SEED_SUPERVISOR_EMAIL,
         password=cfg.SEED_SUPERVISOR_PASSWORD,
         full_name="Bilal Ahmed",
@@ -91,6 +148,7 @@ def seed_database(db: Session, settings: Settings | None = None) -> None:
     if project is None:
         project = Project(
             id=SEED_PROJECT_ID,
+            organization_id=org.id,
             name="Clifton Tower Phase 2",
             site_address="Plot 14-C, Block 4, Clifton, Karachi",
             owner_phone="+923001234567",
@@ -100,6 +158,8 @@ def seed_database(db: Session, settings: Settings | None = None) -> None:
         )
         db.add(project)
         db.flush()
+    elif project.organization_id is None:
+        project.organization_id = org.id
 
     _ensure_membership(db, project.id, owner.id, "OWNER")
     _ensure_membership(db, project.id, supervisor.id, "SUPERVISOR")

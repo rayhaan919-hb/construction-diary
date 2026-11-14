@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -7,6 +8,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app.core.logging_config import redact_text
+
+logger = logging.getLogger(__name__)
 
 
 class FieldError(BaseModel):
@@ -52,12 +57,13 @@ def problem_response(
     errors: list[FieldError] | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    safe_detail = redact_text(detail) if detail else None
     body = Problem(
         type="about:blank",
         title=title,
         status=status_code,
         code=code,
-        detail=detail,
+        detail=safe_detail,
         errors=errors,
     ).model_dump(exclude_none=True)
     return JSONResponse(
@@ -75,7 +81,9 @@ _STATUS_TO_CODE: dict[int, tuple[str, str]] = {
     405: ("METHOD_NOT_ALLOWED", "Method Not Allowed"),
     409: ("CONFLICT", "Conflict"),
     413: ("BATCH_TOO_LARGE", "Payload Too Large"),
+    415: ("UNSUPPORTED_MEDIA_TYPE", "Unsupported Media Type"),
     422: ("VALIDATION", "Validation Error"),
+    429: ("RATE_LIMITED", "Too Many Requests"),
 }
 
 
@@ -137,8 +145,14 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(
-        _request: Request, _exc: Exception
+        request: Request, exc: Exception
     ) -> JSONResponse:
+        logger.exception(
+            "Unhandled internal error on %s %s",
+            request.method,
+            request.url.path,
+            exc_info=exc,
+        )
         return problem_response(
             status_code=500,
             code="INTERNAL_ERROR",

@@ -151,7 +151,17 @@ def test_member_invite_temp_password_and_removal(
     assert rem_resp.status_code == 204
 
     new_sup_headers = auth_headers(client, "newsup@example.com", temp_pw)
-    denied = client.get(f"/v1/projects/{pid}", headers=new_sup_headers)
+    must_change = client.get(f"/v1/projects/{pid}", headers=new_sup_headers)
+    assert_problem_json(must_change, 403, "PASSWORD_CHANGE_REQUIRED")
+
+    ch_resp = client.post(
+        "/v1/me/password",
+        headers=new_sup_headers,
+        json={"current_password": temp_pw, "new_password": "NewSupPassword1!"},
+    )
+    assert ch_resp.status_code == 204
+    verified_headers = auth_headers(client, "newsup@example.com", "NewSupPassword1!")
+    denied = client.get(f"/v1/projects/{pid}", headers=verified_headers)
     assert_problem_json(denied, 404, "NOT_FOUND")
 
 

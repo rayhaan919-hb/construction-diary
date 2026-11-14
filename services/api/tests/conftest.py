@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
 from app.core.config import get_settings, normalize_postgres_url
-from app.db.models import Project, ProjectMember, User
+from app.core.rate_limit import rate_limiter
+from app.db.models import Organization, OrganizationMember, Project, ProjectMember, User
 from app.db.session import get_engine
 from app.main import app
 from app.services.auth import hash_password
@@ -138,14 +139,20 @@ def reset_state(
     monkeypatch.setenv("PUBLIC_API_BASE_URL", "http://testserver")
     monkeypatch.setenv("JWT_SECRET", "test-jwt-secret-key-for-unit-tests-only")
     monkeypatch.setenv("MEDIA_URL_SIGNING_SECRET", "test-media-signing-secret")
+    monkeypatch.setenv("ENABLE_DEV_SEED", "true")
+    monkeypatch.setenv("SEED_OWNER_PASSWORD", "owner12345")
+    monkeypatch.setenv("SEED_SUPERVISOR_PASSWORD", "super12345")
+    rate_limiter.clear()
     get_settings.cache_clear()
     get_engine.cache_clear()
 
     with db_engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE TABLE site_log_photos, site_logs, permit_alerts, permits, "
-                "project_members, projects, device_tokens, refresh_tokens, users "
+                "TRUNCATE TABLE audit_logs, billing_events, extraction_jobs, upload_tickets, "
+                "site_log_photos, site_logs, permit_alerts, permits, "
+                "project_members, projects, organization_invitations, organization_members, "
+                "device_tokens, password_reset_tokens, refresh_tokens, users, organizations "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -153,6 +160,7 @@ def reset_state(
 
     yield
 
+    rate_limiter.clear()
     get_settings.cache_clear()
     get_engine.cache_clear()
 
@@ -177,8 +185,26 @@ def client(db_engine: Engine) -> Generator[TestClient, None, None]:
 
 
 @pytest.fixture
-def owner_user(db_session: Session) -> User:
+def default_org(db_session: Session) -> Organization:
+    org = db_session.query(Organization).filter(Organization.slug == "default-org").first()
+    if org is not None:
+        return org
+    org = Organization(
+        name="Default Construction Org",
+        slug="default-org",
+        plan_tier="PRO",
+        subscription_status="ACTIVE",
+    )
+    db_session.add(org)
+    db_session.commit()
+    db_session.refresh(org)
+    return org
+
+
+@pytest.fixture
+def owner_user(db_session: Session, default_org: Organization) -> User:
     user = User(
+        organization_id=default_org.id,
         email="owner@example.com",
         password_hash=hash_password("owner12345"),
         full_name="Site Owner",
@@ -187,14 +213,19 @@ def owner_user(db_session: Session) -> User:
         must_change_password=False,
     )
     db_session.add(user)
+    db_session.flush()
+    db_session.add(
+        OrganizationMember(organization_id=default_org.id, user_id=user.id, role="OWNER")
+    )
     db_session.commit()
     db_session.refresh(user)
     return user
 
 
 @pytest.fixture
-def supervisor_user(db_session: Session) -> User:
+def supervisor_user(db_session: Session, default_org: Organization) -> User:
     user = User(
+        organization_id=default_org.id,
         email="supervisor@example.com",
         password_hash=hash_password("super12345"),
         full_name="Site Supervisor",
@@ -203,6 +234,12 @@ def supervisor_user(db_session: Session) -> User:
         must_change_password=False,
     )
     db_session.add(user)
+    db_session.flush()
+    db_session.add(
+        OrganizationMember(
+            organization_id=default_org.id, user_id=user.id, role="SUPERVISOR"
+        )
+    )
     db_session.commit()
     db_session.refresh(user)
     return user
@@ -233,8 +270,10 @@ def sample_project(
     db_session: Session,
     owner_user: User,
     supervisor_user: User,
+    default_org: Organization,
 ) -> Project:
     project = Project(
+        organization_id=default_org.id,
         name="Alpha Tower",
         site_address="Plot 10, Clifton, Karachi",
         owner_phone="+923001112233",

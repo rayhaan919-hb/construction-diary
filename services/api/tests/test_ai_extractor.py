@@ -68,7 +68,9 @@ def test_gemini_ai_studio_and_vertex_modes(tmp_path: Path) -> None:
             "local://projects/p1/audio/l1.m4a", storage=storage, settings=storage_cfg
         )
         assert res == expected
-        client_cls.assert_called_once_with(api_key="test-api-key")
+        client_cls.assert_called_once()
+        assert client_cls.call_args.kwargs["api_key"] == "test-api-key"
+        assert client_cls.call_args.kwargs["http_options"].timeout == 60000
 
     # Vertex AI mode (gs:// URI)
     vertex_cfg = Settings(
@@ -82,11 +84,11 @@ def test_gemini_ai_studio_and_vertex_modes(tmp_path: Path) -> None:
             "gs://my-bucket/projects/p1/audio/l1.m4a", settings=vertex_cfg
         )
         assert res_v == expected
-        client_cls.assert_called_once_with(
-            vertexai=True,
-            project="test-gcp-project",
-            location="us-central1",
-        )
+        client_cls.assert_called_once()
+        assert client_cls.call_args.kwargs["vertexai"] is True
+        assert client_cls.call_args.kwargs["project"] == "test-gcp-project"
+        assert client_cls.call_args.kwargs["location"] == "us-central1"
+        assert client_cls.call_args.kwargs["http_options"].timeout == 60000
 
 
 def test_gcs_storage_signed_urls_and_exists() -> None:
@@ -107,11 +109,30 @@ def test_gcs_storage_signed_urls_and_exists() -> None:
 
     pid = uuid4()
     oid = uuid4()
-    with patch("google.cloud.storage.Client", return_value=fake_gcs_client):
-        ticket = service.create_upload_ticket("AUDIO", pid, oid, "audio/mp4")
+    tid = uuid4()
+    fake_sa_creds = SimpleNamespace(sign_bytes=lambda data: b"sig")
+    with (
+        patch("google.cloud.storage.Client", return_value=fake_gcs_client),
+        patch("google.auth.default", return_value=(fake_sa_creds, "test-proj")),
+    ):
+        ticket = service.create_upload_ticket(
+            project_id=pid,
+            kind="AUDIO",
+            object_id=oid,
+            content_type="audio/mp4",
+            ticket_id=tid,
+            expected_byte_size=2048,
+        )
         assert ticket.upload_url == "https://storage.googleapis.com/signed-v4"
-        assert ticket.storage_uri == f"gs://site-diary-test-bucket/projects/{pid}/audio/{oid}.m4a"
-        assert ticket.headers == {"Content-Type": "audio/mp4"}
+        assert (
+            ticket.storage_uri
+            == f"gs://site-diary-test-bucket/projects/{pid}/audio/{oid}/{tid}.m4a"
+        )
+        assert ticket.headers == {
+            "Content-Type": "audio/mp4",
+            "x-goog-if-generation-match": "0",
+            "x-goog-content-length-range": "1,2048",
+        }
 
         read_url = service.sign_get_url(ticket.storage_uri, ttl_seconds=3600)
         assert read_url == "https://storage.googleapis.com/signed-v4"

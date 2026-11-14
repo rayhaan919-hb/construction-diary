@@ -39,6 +39,7 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
     assert_problem_json(bad_ticket, 422, "VALIDATION")
 
     # Get audio upload ticket
+    valid_m4a = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00fake-audio"
     audio_ticket_resp = client.post(
         "/v1/media/upload-url",
         headers=supervisor_headers,
@@ -47,12 +48,15 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
             "project_id": pid,
             "object_id": str(log_id),
             "content_type": "audio/mp4",
-            "byte_size": 100,
+            "byte_size": len(valid_m4a),
         },
     )
     assert audio_ticket_resp.status_code == 200
     audio_ticket = audio_ticket_resp.json()
-    assert audio_ticket["storage_uri"] == f"local://projects/{pid}/audio/{log_id}.m4a"
+    assert re.fullmatch(
+        rf"local://projects/{pid}/audio/{log_id}/[0-9a-f-]+\.m4a",
+        audio_ticket["storage_uri"],
+    )
 
     # Calling /complete before /sync/push -> 409 ROW_NOT_SYNCED
     early_complete = client.post(
@@ -106,7 +110,7 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
     tampered_path = re.sub(r"sig=[0-9a-f]+", "sig=0000deadbeef", upload_path)
     tampered = client.put(
         tampered_path,
-        content=b"fake-m4a-bytes",
+        content=valid_m4a,
         headers={"Content-Type": "audio/mp4"},
     )
     assert_problem_json(tampered, 403, "FORBIDDEN")
@@ -114,7 +118,7 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
     expired_path = re.sub(r"exp=\d+", "exp=1", upload_path)
     expired_sig = client.put(
         expired_path,
-        content=b"fake-m4a-bytes",
+        content=valid_m4a,
         headers={"Content-Type": "audio/mp4"},
     )
     assert_problem_json(expired_sig, 403, "FORBIDDEN")
@@ -122,7 +126,7 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
     # Valid local PUT
     put_resp = client.put(
         upload_path,
-        content=b"fake-m4a-bytes",
+        content=valid_m4a,
         headers={"Content-Type": "audio/mp4"},
     )
     assert put_resp.status_code == 200
@@ -147,6 +151,10 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
     assert body["photos"][0]["url"] is None
 
     # Upload photo & complete -> GET /v1/logs/{id} now returns signed photo URL that streams bytes
+    valid_jpeg = (
+        b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+        b"fake-jpeg\xff\xd9"
+    )
     photo_ticket = client.post(
         "/v1/media/upload-url",
         headers=supervisor_headers,
@@ -155,12 +163,12 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
             "project_id": pid,
             "object_id": str(photo_id),
             "content_type": "image/jpeg",
-            "byte_size": 10,
+            "byte_size": len(valid_jpeg),
         },
     ).json()
     photo_put = client.put(
         photo_ticket["upload_url"].replace("http://testserver", ""),
-        content=b"jpeg-bytes",
+        content=valid_jpeg,
         headers={"Content-Type": "image/jpeg"},
     )
     assert photo_put.status_code == 200
@@ -178,7 +186,7 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
     assert signed_photo_url is not None
     downloaded = client.get(signed_photo_url.replace("http://testserver", ""))
     assert downloaded.status_code == 200
-    assert downloaded.content == b"jpeg-bytes"
+    assert downloaded.content == valid_jpeg
 
     # Human edits structured_summary -> /v1/logs/extract MUST NOT overwrite it!
     human_summary = {
@@ -255,7 +263,7 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
                         "project_id": pid,
                         "log_date": "2026-11-12",
                         "recorded_at": now.isoformat(),
-                        "notes": "No audio",
+                        "notes": "",
                         "client_updated_at": now.isoformat(),
                     }
                 ]
@@ -271,6 +279,9 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
 
     # PERMIT_DOC upload-url -> local PUT -> complete -> permit returns signed document_photo_url
     permit_obj_id = uuid.uuid4()
+    valid_permit_jpg = (
+        b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00permit-1\xff\xd9"
+    )
     pdoc_ticket = client.post(
         "/v1/media/upload-url",
         headers=owner_headers,
@@ -279,14 +290,17 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
             "project_id": pid,
             "object_id": str(permit_obj_id),
             "content_type": "image/jpeg",
-            "byte_size": 12,
+            "byte_size": len(valid_permit_jpg),
         },
     ).json()
-    assert pdoc_ticket["storage_uri"] == f"local://projects/{pid}/permits/{permit_obj_id}.jpg"
+    assert re.fullmatch(
+        rf"local://projects/{pid}/permits/{permit_obj_id}/[0-9a-f-]+\.jpg",
+        pdoc_ticket["storage_uri"],
+    )
     assert (
         client.put(
             pdoc_ticket["upload_url"].replace("http://testserver", ""),
-            content=b"permit-jpg-1",
+            content=valid_permit_jpg,
             headers={"Content-Type": "image/jpeg"},
         ).status_code
         == 200
@@ -322,7 +336,7 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
     permits_list = client.get(f"/v1/projects/{pid}/permits", headers=owner_headers).json()
     doc_url = permits_list[0]["document_photo_url"]
     assert doc_url is not None
-    assert client.get(doc_url.replace("http://testserver", "")).content == b"permit-jpg-1"
+    assert client.get(doc_url.replace("http://testserver", "")).content == valid_permit_jpg
 
     # Empty day report still returns 200 with zeroed counts and project permits
     empty_day = client.get(

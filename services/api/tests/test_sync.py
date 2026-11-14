@@ -294,8 +294,18 @@ def test_sync_pull_pagination_scoped_backfill_and_membership_tombstone(
         headers=owner_headers,
         json={"email": "mobile@example.com", "full_name": "Mobile Sup"},
     ).json()
-    sup_headers = auth_headers(client, "mobile@example.com", inv["temporary_password"])
+    temp_headers = auth_headers(client, "mobile@example.com", inv["temporary_password"])
     sup_uid = inv["member"]["user_id"]
+    ch_pw = client.post(
+        "/v1/me/password",
+        headers=temp_headers,
+        json={
+            "current_password": inv["temporary_password"],
+            "new_password": "MobileSupPassword1!",
+        },
+    )
+    assert ch_pw.status_code == 204
+    sup_headers = auth_headers(client, "mobile@example.com", "MobileSupPassword1!")
 
     # Paginated pull with limit=2 until exhausted
     cursor = 0

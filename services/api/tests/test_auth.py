@@ -49,6 +49,8 @@ def test_login_and_me_and_problem_errors(
             "sub": str(owner_user.id),
             "role": owner_user.role,
             "type": "access",
+            "iss": cfg.JWT_ISSUER,
+            "aud": cfg.JWT_AUDIENCE,
             "iat": int((datetime.now(UTC) - timedelta(hours=1)).timestamp()),
             "exp": int((datetime.now(UTC) - timedelta(minutes=5)).timestamp()),
         },

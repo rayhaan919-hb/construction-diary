@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.schemas.auth import Role
+from app.core.permissions import Role
 from app.schemas.permits import PermitResponse
 
 PermitHealth = Literal["OK", "WARN", "EXPIRED", "NONE"]
@@ -23,8 +23,8 @@ def _validate_iana_timezone(value: str) -> str:
 
 class ProjectInput(BaseModel):
     name: str = Field(min_length=1, max_length=200)
-    site_address: str = Field(min_length=1)
-    owner_phone: str | None = None
+    site_address: str = Field(min_length=1, max_length=500)
+    owner_phone: str | None = Field(default=None, max_length=40)
     timezone: str = "Asia/Karachi"
     allow_photo_gps: bool = False
 
@@ -36,8 +36,8 @@ class ProjectInput(BaseModel):
 
 class ProjectPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    site_address: str | None = Field(default=None, min_length=1)
-    owner_phone: str | None = None
+    site_address: str | None = Field(default=None, min_length=1, max_length=500)
+    owner_phone: str | None = Field(default=None, max_length=40)
     timezone: str | None = None
     allow_photo_gps: bool | None = None
 
@@ -53,6 +53,7 @@ class ProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    organization_id: UUID | None = None
     name: str
     site_address: str
     owner_phone: str | None = None
@@ -93,7 +94,12 @@ class MemberResponse(BaseModel):
 
 class InviteMemberRequest(BaseModel):
     email: EmailStr
-    full_name: str = Field(min_length=1)
+    full_name: str = Field(min_length=1, max_length=120)
+    role: Role = "SUPERVISOR"
+
+
+class MemberRoleUpdateRequest(BaseModel):
+    role: Role
 
 
 class InviteMemberResponse(BaseModel):

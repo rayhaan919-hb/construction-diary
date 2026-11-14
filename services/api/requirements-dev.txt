@@ -1,7 +1,5 @@
 -e .
-httpx>=0.27.0,<1.0
 mypy>=1.13.0
 pgserver>=0.1.4
 pytest>=8.3.0
 ruff>=0.8.0
-tzdata>=2024.1

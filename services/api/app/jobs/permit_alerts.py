@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import smtplib
+from collections import defaultdict
 from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Literal, Protocol
 from uuid import UUID
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -27,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 AlertThreshold = Literal["D30", "D14", "D7", "D1", "EXPIRED"]
 AlertChannel = Literal["CONSOLE", "EMAIL", "FCM"]
+
+_ADVISORY_LOCK_KEY = 72424201
 
 
 @dataclass(frozen=True)
@@ -74,14 +78,14 @@ class ConsoleNotifier:
 
     def send(self, db: Session, payload: PermitAlertPayload) -> bool:
         del db
-        msg = (
-            f"[PERMIT ALERT {payload.threshold}] project={payload.project_name} "
-            f"permit={payload.permit_name} ({payload.authority}) "
-            f"expiry={payload.expiry_date} days_to_expiry={payload.days_to_expiry} "
-            f"recipient={payload.recipient_email}"
+        logger.info(
+            "Permit alert dispatched threshold=%s permit_id=%s project_id=%s user_id=%s days=%s",
+            payload.threshold,
+            payload.permit_id,
+            payload.project_id,
+            payload.recipient_user_id,
+            payload.days_to_expiry,
         )
-        logger.warning(msg)
-        print(msg)
         return True
 
 
@@ -90,11 +94,37 @@ class EmailNotifier:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._smtp: smtplib.SMTP | None = None
+        self._pooled: bool = False
+
+    def begin_batch(self) -> None:
+        self._pooled = True
+
+    def _connect(self) -> smtplib.SMTP:
+        smtp = smtplib.SMTP(self.settings.SMTP_HOST, self.settings.SMTP_PORT, timeout=15)
+        smtp.ehlo()
+        if smtp.has_extn("starttls"):
+            smtp.starttls()
+            smtp.ehlo()
+        if self.settings.SMTP_USER and self.settings.SMTP_PASSWORD:
+            smtp.login(self.settings.SMTP_USER, self.settings.SMTP_PASSWORD)
+        return smtp
+
+    def _get_smtp(self) -> smtplib.SMTP:
+        if self._smtp is None:
+            self._smtp = self._connect()
+        return self._smtp
+
+    def close(self) -> None:
+        self._pooled = False
+        if self._smtp is not None:
+            with contextlib.suppress(Exception):
+                self._smtp.quit()
+            self._smtp = None
 
     def send(self, db: Session, payload: PermitAlertPayload) -> bool:
         del db
         if not self.settings.SMTP_HOST:
-            logger.warning("SMTP_HOST not configured; skipping email alert")
             return False
 
         msg = EmailMessage()
@@ -110,22 +140,35 @@ class EmailNotifier:
             f"'{payload.project_name}' has reached alert threshold {payload.threshold}.\n"
             f"Expiry date: {payload.expiry_date} (days remaining: {payload.days_to_expiry}).\n"
         )
-
-        with smtplib.SMTP(self.settings.SMTP_HOST, self.settings.SMTP_PORT, timeout=15) as smtp:
-            if self.settings.SMTP_USER and self.settings.SMTP_PASSWORD:
-                smtp.starttls()
-                smtp.login(self.settings.SMTP_USER, self.settings.SMTP_PASSWORD)
-            smtp.send_message(msg)
+        if self._pooled:
+            self._get_smtp().send_message(msg)
+        else:
+            with self._connect() as smtp:
+                smtp.send_message(msg)
         return True
 
 
 class FcmNotifier:
     channel: AlertChannel = "FCM"
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        tokens_by_user: dict[UUID, list[str]] | None = None,
+    ) -> None:
         self.settings = settings
+        self._tokens_by_user = tokens_by_user
+        self._cached_access_token: str | None = None
+        self._client: httpx.Client | None = None
+        self._pooled: bool = False
+
+    def begin_batch(self) -> None:
+        self._pooled = True
 
     def _get_access_token(self) -> str:
+        if self._cached_access_token:
+            return self._cached_access_token
         import google.auth
         from google.auth.transport.requests import Request
         from google.oauth2 import service_account
@@ -141,20 +184,72 @@ class FcmNotifier:
         creds.refresh(Request())
         if not creds.token:
             raise RuntimeError("Failed to obtain OAuth2 token for FCM HTTP v1")
-        return str(creds.token)
+        self._cached_access_token = str(creds.token)
+        return self._cached_access_token
+
+    def _get_client(self) -> httpx.Client:
+        if self._client is None:
+            self._client = httpx.Client(timeout=15.0)
+        return self._client
+
+    def close(self) -> None:
+        self._pooled = False
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+
+    def _send_with_client(
+        self,
+        client: httpx.Client,
+        tokens: list[str],
+        endpoint: str,
+        headers: dict[str, str],
+        payload: PermitAlertPayload,
+    ) -> bool:
+        sent_any = False
+        for token in tokens:
+            body = {
+                "message": {
+                    "token": token,
+                    "notification": {
+                        "title": f"Permit Alert ({payload.threshold}): {payload.permit_name}",
+                        "body": (
+                            f"{payload.project_name} — expires {payload.expiry_date} "
+                            f"({payload.days_to_expiry}d)"
+                        ),
+                    },
+                    "data": {
+                        "permit_id": str(payload.permit_id),
+                        "project_id": str(payload.project_id),
+                        "threshold": payload.threshold,
+                    },
+                }
+            }
+            resp = client.post(endpoint, headers=headers, json=body)
+            if resp.is_success:
+                sent_any = True
+            else:
+                logger.warning(
+                    "FCM send failed for user=%s status=%s",
+                    payload.recipient_user_id,
+                    resp.status_code,
+                )
+        return sent_any
 
     def send(self, db: Session, payload: PermitAlertPayload) -> bool:
         if not self.settings.FCM_PROJECT_ID:
-            logger.warning("FCM_PROJECT_ID not configured; skipping FCM alert")
             return False
 
-        tokens = list(
-            db.scalars(
-                select(DeviceToken.fcm_token).where(
-                    DeviceToken.user_id == payload.recipient_user_id
+        if self._tokens_by_user is not None:
+            tokens = self._tokens_by_user.get(payload.recipient_user_id, [])
+        else:
+            tokens = list(
+                db.scalars(
+                    select(DeviceToken.fcm_token).where(
+                        DeviceToken.user_id == payload.recipient_user_id
+                    )
                 )
             )
-        )
         if not tokens:
             return False
 
@@ -167,40 +262,19 @@ class FcmNotifier:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         }
-        sent_any = False
+        if self._pooled:
+            return self._send_with_client(
+                self._get_client(), tokens, endpoint, headers, payload
+            )
         with httpx.Client(timeout=15.0) as client:
-            for token in tokens:
-                body = {
-                    "message": {
-                        "token": token,
-                        "notification": {
-                            "title": f"Permit Alert ({payload.threshold}): {payload.permit_name}",
-                            "body": (
-                                f"{payload.project_name} — expires {payload.expiry_date} "
-                                f"({payload.days_to_expiry}d)"
-                            ),
-                        },
-                        "data": {
-                            "permit_id": str(payload.permit_id),
-                            "project_id": str(payload.project_id),
-                            "threshold": payload.threshold,
-                        },
-                    }
-                }
-                resp = client.post(endpoint, headers=headers, json=body)
-                if resp.is_success:
-                    sent_any = True
-                else:
-                    logger.warning(
-                        "FCM send failed for user %s: status=%s body=%s",
-                        payload.recipient_user_id,
-                        resp.status_code,
-                        resp.text[:300],
-                    )
-        return sent_any
+            return self._send_with_client(client, tokens, endpoint, headers, payload)
 
 
-def build_notifiers(settings: Settings) -> list[Notifier]:
+def build_notifiers(
+    settings: Settings,
+    *,
+    tokens_by_user: dict[UUID, list[str]] | None = None,
+) -> list[Notifier]:
     notifiers: list[Notifier] = []
     for channel_name in settings.notifier_channels:
         if channel_name == "console":
@@ -208,7 +282,7 @@ def build_notifiers(settings: Settings) -> list[Notifier]:
         elif channel_name == "email":
             notifiers.append(EmailNotifier(settings))
         elif channel_name == "fcm":
-            notifiers.append(FcmNotifier(settings))
+            notifiers.append(FcmNotifier(settings, tokens_by_user=tokens_by_user))
         else:
             logger.warning("Unknown NOTIFIER channel ignored: %s", channel_name)
     if not notifiers:
@@ -221,9 +295,13 @@ def run_permit_alerts(
     notifiers: list[Notifier] | None = None,
     settings: Settings | None = None,
 ) -> int:
-    """Evaluate permits_with_status thresholds and dispatch deduplicated alerts."""
+    """Evaluate permits_with_status thresholds and dispatch deduplicated alerts safely."""
     cfg = settings or get_settings()
-    active_notifiers = notifiers if notifiers is not None else build_notifiers(cfg)
+
+    acquired = db.scalar(select(text(f"pg_try_advisory_xact_lock({_ADVISORY_LOCK_KEY})")))
+    if not acquired:
+        logger.info("Permit alerts run skipped because another worker holds advisory lock")
+        return 0
 
     permit_rows = db.execute(
         select(PermitWithStatus, Project.name)
@@ -235,73 +313,111 @@ def run_permit_alerts(
         .order_by(PermitWithStatus.expiry_date.asc())
     ).all()
 
-    sent_count = 0
-    for permit, project_name in permit_rows:
-        threshold = match_threshold(permit.days_to_expiry)
-        if threshold is None:
-            continue
+    matched_rows = [
+        (permit, project_name, threshold)
+        for permit, project_name in permit_rows
+        if (threshold := match_threshold(permit.days_to_expiry)) is not None
+    ]
+    if not matched_rows:
+        db.commit()
+        return 0
 
-        recipients = list(
-            db.scalars(
-                select(User)
-                .join(ProjectMember, ProjectMember.user_id == User.id)
-                .where(
-                    ProjectMember.project_id == permit.project_id,
-                    ProjectMember.deleted_at.is_(None),
-                )
-            )
+    project_ids = list({permit.project_id for permit, _, _ in matched_rows})
+    member_rows = db.execute(
+        select(ProjectMember.project_id, User)
+        .join(User, User.id == ProjectMember.user_id)
+        .where(
+            ProjectMember.project_id.in_(project_ids),
+            ProjectMember.deleted_at.is_(None),
+            User.status == "ACTIVE",
         )
-        for user in recipients:
-            payload = PermitAlertPayload(
-                permit_id=permit.id,
-                project_id=permit.project_id,
-                project_name=project_name,
-                permit_name=permit.permit_name,
-                authority=permit.authority,
-                expiry_date=permit.expiry_date.isoformat(),
-                days_to_expiry=permit.days_to_expiry,
-                threshold=threshold,
-                recipient_user_id=user.id,
-                recipient_email=user.email,
-                recipient_name=user.full_name,
+    ).all()
+    recipients_by_project: dict[UUID, list[User]] = defaultdict(list)
+    user_ids: set[UUID] = set()
+    for pid, user in member_rows:
+        recipients_by_project[pid].append(user)
+        user_ids.add(user.id)
+
+    tokens_by_user: dict[UUID, list[str]] = defaultdict(list)
+    if user_ids:
+        for uid, fcm_token in db.execute(
+            select(DeviceToken.user_id, DeviceToken.fcm_token).where(
+                DeviceToken.user_id.in_(user_ids)
             )
-            for notifier in active_notifiers:
-                try:
-                    with db.begin_nested():
-                        inserted_id = db.scalar(
-                            pg_insert(PermitAlert)
-                            .values(
-                                permit_id=permit.id,
-                                threshold=threshold,
-                                channel=notifier.channel,
-                                recipient_user_id=user.id,
+        ).all():
+            tokens_by_user[uid].append(fcm_token)
+
+    active_notifiers = (
+        notifiers
+        if notifiers is not None
+        else build_notifiers(cfg, tokens_by_user=tokens_by_user)
+    )
+
+    sent_count = 0
+    for notifier in active_notifiers:
+        begin_fn = getattr(notifier, "begin_batch", None)
+        if callable(begin_fn):
+            begin_fn()
+    try:
+        for permit, project_name, threshold in matched_rows:
+            for user in recipients_by_project.get(permit.project_id, []):
+                payload = PermitAlertPayload(
+                    permit_id=permit.id,
+                    project_id=permit.project_id,
+                    project_name=project_name,
+                    permit_name=permit.permit_name,
+                    authority=permit.authority,
+                    expiry_date=permit.expiry_date.isoformat(),
+                    days_to_expiry=permit.days_to_expiry,
+                    threshold=threshold,
+                    recipient_user_id=user.id,
+                    recipient_email=user.email,
+                    recipient_name=user.full_name,
+                )
+                for notifier in active_notifiers:
+                    try:
+                        with db.begin_nested():
+                            inserted_id = db.scalar(
+                                pg_insert(PermitAlert)
+                                .values(
+                                    permit_id=permit.id,
+                                    threshold=threshold,
+                                    channel=notifier.channel,
+                                    recipient_user_id=user.id,
+                                    permit_expiry_date=permit.expiry_date,
+                                )
+                                .on_conflict_do_nothing(
+                                    index_elements=[
+                                        PermitAlert.permit_id,
+                                        PermitAlert.threshold,
+                                        PermitAlert.channel,
+                                        PermitAlert.recipient_user_id,
+                                        PermitAlert.permit_expiry_date,
+                                    ]
+                                )
+                                .returning(PermitAlert.id)
                             )
-                            .on_conflict_do_nothing(
-                                index_elements=[
-                                    PermitAlert.permit_id,
-                                    PermitAlert.threshold,
-                                    PermitAlert.channel,
-                                    PermitAlert.recipient_user_id,
-                                ]
-                            )
-                            .returning(PermitAlert.id)
+                            if inserted_id is None:
+                                continue
+                            delivered = notifier.send(db, payload)
+                            if not delivered:
+                                raise _SkipAlertRecord()
+                            sent_count += 1
+                    except _SkipAlertRecord:
+                        continue
+                    except Exception:
+                        logger.exception(
+                            "Failed sending %s alert for permit=%s user=%s",
+                            notifier.channel,
+                            permit.id,
+                            user.id,
                         )
-                        if inserted_id is None:
-                            continue
-                        delivered = notifier.send(db, payload)
-                        if not delivered:
-                            raise _SkipAlertRecord()
-                        sent_count += 1
-                except _SkipAlertRecord:
-                    continue
-                except Exception:
-                    logger.exception(
-                        "Failed sending %s alert for permit=%s user=%s",
-                        notifier.channel,
-                        permit.id,
-                        user.id,
-                    )
-                    continue
+                        continue
+    finally:
+        for notifier in active_notifiers:
+            close_fn = getattr(notifier, "close", None)
+            if callable(close_fn):
+                close_fn()
 
     db.commit()
     return sent_count
