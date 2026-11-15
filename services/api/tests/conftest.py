@@ -61,6 +61,11 @@ def _prepare_pgserver_install(
 
     tz_src = tz_source_dir or (Path(tzdata.__file__).resolve().parent / "zoneinfo")
     if tz_src.is_dir():
+        # copytree preserves source permission bits; the staged copy must be writable
+        # even if the source (e.g. site-packages) is read-only.
+        for staged_dir in (staged_install, *staged_install.rglob("*")):
+            if staged_dir.is_dir() and not staged_dir.is_symlink():
+                staged_dir.chmod(staged_dir.stat().st_mode | 0o700)
         shutil.copytree(
             tz_src,
             staged_install / "share" / "postgresql" / "timezone",
