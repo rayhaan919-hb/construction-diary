@@ -91,9 +91,23 @@ jobs:
       - run: uvx pip-audit --local
       - run: uv run ruff check .
       - run: uv run mypy .
-      - run: uv run pytest -q
+      - name: Run backend test suite
         env:
           USE_MOCK_GEMINI: "true"
+        run: |
+          set -o pipefail
+          uv run pytest -ra --tb=short 2>&1 | tee "${RUNNER_TEMP}/pytest.log" || {
+            grep -E "^(FAILED|ERROR) " "${RUNNER_TEMP}/pytest.log" | head -n 10 | while IFS= read -r line; do
+              echo "::error title=pytest failure::${line}"
+            done
+            TAIL_MSG="$(tail -n 20 "${RUNNER_TEMP}/pytest.log" | tr '\n' ' ' | cut -c1-800)"
+            echo "::error title=pytest tail::${TAIL_MSG}"
+            echo "### Backend pytest failure tail" >> "${GITHUB_STEP_SUMMARY}"
+            echo '```' >> "${GITHUB_STEP_SUMMARY}"
+            tail -n 60 "${RUNNER_TEMP}/pytest.log" >> "${GITHUB_STEP_SUMMARY}"
+            echo '```' >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          }
 
   mobile:
     name: Android Field App (apps/mobile)
@@ -109,11 +123,36 @@ jobs:
           distribution: "temurin"
           java-version: "21"
 
-      - uses: android-actions/setup-android@v4
-        with:
-          packages: |
-            platform-tools
-            build-tools;36.0.0
+      - name: Configure Android SDK & accept licenses
+        run: |
+          set -e
+          SDK_DIR="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMGR="$(command -v sdkmanager || find "${SDK_DIR}" -maxdepth 4 -type f -name sdkmanager 2>/dev/null | head -n 1 || true)"
+          install_sdk_tools() {
+            local target_dir="$1"
+            mkdir -p "${target_dir}/cmdline-tools"
+            curl -fsSL -o "${RUNNER_TEMP}/cmdline-tools.zip" "https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip"
+            unzip -q -o "${RUNNER_TEMP}/cmdline-tools.zip" -d "${target_dir}/cmdline-tools"
+            rm -rf "${target_dir}/cmdline-tools/latest"
+            mv "${target_dir}/cmdline-tools/cmdline-tools" "${target_dir}/cmdline-tools/latest"
+            rm -f "${RUNNER_TEMP}/cmdline-tools.zip"
+          }
+          if [ -z "${SDKMGR}" ] || [ ! -w "${SDK_DIR}" ] || ! "${SDKMGR}" --sdk_root="${SDK_DIR}" --version >/dev/null 2>&1; then
+            SDK_DIR="${HOME}/android-sdk"
+            install_sdk_tools "${SDK_DIR}"
+            SDKMGR="${SDK_DIR}/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          echo "Using Android SDK at ${SDK_DIR} with ${SDKMGR}"
+          echo "ANDROID_HOME=${SDK_DIR}" >> "${GITHUB_ENV}"
+          echo "ANDROID_SDK_ROOT=${SDK_DIR}" >> "${GITHUB_ENV}"
+          echo "${SDK_DIR}/platform-tools" >> "${GITHUB_PATH}"
+          echo "$(dirname "${SDKMGR}")" >> "${GITHUB_PATH}"
+          (yes || true) | "${SDKMGR}" --sdk_root="${SDK_DIR}" --licenses >/dev/null || true
+          "${SDKMGR}" --sdk_root="${SDK_DIR}" --install "platform-tools" "build-tools;36.0.0" "platforms;android-37.0" || \
+            "${SDKMGR}" --sdk_root="${SDK_DIR}" --install "platform-tools" "build-tools;36.0.0" || {
+              echo "::error title=Android SDK setup failure::sdkmanager failed for SDK_DIR=${SDK_DIR}"
+              exit 1
+            }
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -130,7 +169,18 @@ jobs:
           fi
 
       - run: chmod +x ./gradlew
-      - run: ./gradlew testDebugUnitTest lintDebug --no-daemon --console=plain
+      - name: Run Android unit tests & lint
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest lintDebug --no-daemon --console=plain 2>&1 | tee "${RUNNER_TEMP}/gradle-check.log" || {
+            TAIL_MSG="$(tail -n 25 "${RUNNER_TEMP}/gradle-check.log" | tr '\n' ' ' | cut -c1-800)"
+            echo "::error title=Android test/lint failure::${TAIL_MSG}"
+            echo "### Android testDebugUnitTest / lintDebug failure tail" >> "${GITHUB_STEP_SUMMARY}"
+            echo '```' >> "${GITHUB_STEP_SUMMARY}"
+            tail -n 60 "${RUNNER_TEMP}/gradle-check.log" >> "${GITHUB_STEP_SUMMARY}"
+            echo '```' >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          }
 
       - name: Verify fail-closed production release gate when secrets are unset
         if: steps.signing-config.outputs.has_prod_signing != 'true'

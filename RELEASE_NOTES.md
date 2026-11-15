@@ -22,7 +22,7 @@
 
 ### Infrastructure, Disaster Recovery & CI/CD
 - Verified destructive PostgreSQL 16 + local media backup/restore roundtrip (`infra/scripts/verify-backup-restore.sh`) including sorted SHA-256 parity across restored media files and live FastAPI authentication against the restored database.
-- Fixed CI workflow `.github/workflows/ci.yml` (`actions/setup-java@v5`, `android-actions/setup-android@v4`, `npm audit --omit=dev --audit-level=high`, dev dependency reporting, shell syntax checks, fail-closed `bundleRelease` check, and signed `staging` APK/AAB artifact verification) and fixed `pgserver` binary/URI handling in `test_postgres_backup_and_restore_roundtrip`.
+- Fixed CI workflow `.github/workflows/ci.yml` (`actions/setup-java@v5`, deterministic Android SDK & license configuration without deprecated Node 20 `setup-android@v3`, `npm audit --omit=dev --audit-level=high`, dev dependency reporting, shell syntax checks, fail-closed `bundleRelease` check, and signed `staging` APK/AAB artifact verification) and fixed `pgserver` library/binary/URI handling in `test_postgres_backup_and_restore_roundtrip`.
 - Added live Chromium full-stack Playwright E2E coverage (`apps/web/e2e/commercial-readiness.spec.ts`) exercising signup, invitations, RBAC, projects, offline media reservations/sync, lightbox, note editing, permit CRUD, PDF export, and auth guards.
 
 ---

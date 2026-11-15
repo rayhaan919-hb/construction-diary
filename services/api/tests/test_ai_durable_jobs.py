@@ -265,20 +265,30 @@ def test_postgres_backup_and_restore_roundtrip(
     assert Path(pg_dump_bin).exists(), f"pg_dump missing at {pg_dump_bin}"
     assert Path(psql_bin).exists(), f"psql missing at {psql_bin}"
 
+    pg_env = os.environ.copy()
+    pg_lib_dir = Path(pg_dump_bin).resolve().parent.parent / "lib"
+    if pg_lib_dir.is_dir():
+        prev_ld = pg_env.get("LD_LIBRARY_PATH", "")
+        pg_env["LD_LIBRARY_PATH"] = f"{pg_lib_dir}:{prev_ld}" if prev_ld else str(pg_lib_dir)
+
     libpq_uri = pg_uri.replace("postgresql+psycopg://", "postgresql://")
     dump_file = tmp_path / "backup.sql"
     dump_proc = subprocess.run(
         [pg_dump_bin, "--clean", "--if-exists", "--no-owner", "-f", str(dump_file), libpq_uri],
         capture_output=True,
         text=True,
-        check=True,
+        env=pg_env,
+        check=False,
     )
-    assert dump_proc.returncode == 0
+    assert dump_proc.returncode == 0, (
+        f"pg_dump failed ({dump_proc.returncode}): "
+        f"{dump_proc.stderr}\n{dump_proc.stdout[:1000]}"
+    )
     assert dump_file.stat().st_size > 1000
 
     # Restore into an isolated verification database on the same Postgres instance
     restore_db = f"verify_restore_{uuid.uuid4().hex[:8]}"
-    subprocess.run(
+    create_proc = subprocess.run(
         [
             psql_bin,
             "-v",
@@ -290,8 +300,13 @@ def test_postgres_backup_and_restore_roundtrip(
         ],
         capture_output=True,
         text=True,
+        env=pg_env,
         timeout=15,
-        check=True,
+        check=False,
+    )
+    assert create_proc.returncode == 0, (
+        f"psql CREATE DATABASE failed ({create_proc.returncode}): "
+        f"{create_proc.stderr}\n{create_proc.stdout[:1000]}"
     )
     parsed_uri = urlsplit(libpq_uri)
     restore_uri = urlunsplit(parsed_uri._replace(path=f"/{restore_db}"))
@@ -300,6 +315,7 @@ def test_postgres_backup_and_restore_roundtrip(
             [psql_bin, "-v", "ON_ERROR_STOP=1", "-d", restore_uri, "-f", str(dump_file)],
             capture_output=True,
             text=True,
+            env=pg_env,
             timeout=15,
             check=False,
         )
@@ -319,8 +335,13 @@ def test_postgres_backup_and_restore_roundtrip(
             ],
             capture_output=True,
             text=True,
+            env=pg_env,
             timeout=15,
-            check=True,
+            check=False,
+        )
+        assert check_proc.returncode == 0, (
+            f"psql verification query failed ({check_proc.returncode}): "
+            f"{check_proc.stderr}\n{check_proc.stdout[:1000]}"
         )
         assert int(check_proc.stdout.strip()) == 1
     finally:
@@ -334,6 +355,7 @@ def test_postgres_backup_and_restore_roundtrip(
             ],
             capture_output=True,
             text=True,
+            env=pg_env,
             timeout=15,
             check=False,
         )

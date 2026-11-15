@@ -149,7 +149,8 @@ def reset_state(
     with db_engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE TABLE audit_logs, billing_events, extraction_jobs, upload_tickets, "
+                "TRUNCATE TABLE audit_logs, billing_events, media_cleanup_runs, "
+                "media_reservations, extraction_jobs, upload_tickets, "
                 "site_log_photos, site_logs, permit_alerts, permits, "
                 "project_members, projects, organization_invitations, organization_members, "
                 "device_tokens, password_reset_tokens, refresh_tokens, users, organizations "
