@@ -6,6 +6,7 @@ import com.sitediary.mobile.data.local.dao.SiteLogPhotoDao
 import com.sitediary.mobile.data.remote.SiteDiaryApi
 import com.sitediary.mobile.data.remote.dto.MediaCompleteRequestDto
 import com.sitediary.mobile.data.remote.dto.MediaKind
+import com.sitediary.mobile.data.remote.dto.MediaReservationRequestDto
 import com.sitediary.mobile.data.remote.dto.UploadUrlRequestDto
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -128,7 +129,24 @@ class MediaUploader @Inject constructor(
         callComplete: Boolean,
         onUploadCompleted: suspend (Long) -> Unit
     ): SyncOutcome {
-        // 1. Request signed upload ticket
+        // 1a. Register an authenticated pending-record reservation before requesting a ticket
+        val reserveResponse = try {
+            api.reserveMedia(
+                MediaReservationRequestDto(
+                    kind = kind,
+                    projectId = projectId,
+                    objectId = objectId
+                )
+            )
+        } catch (e: IOException) {
+            return SyncOutcome.RetryableError(e.message ?: "Network error reserving media upload")
+        }
+
+        if (!reserveResponse.isSuccessful) {
+            return SyncOutcome.RetryableError("HTTP ${reserveResponse.code()} reserving media upload")
+        }
+
+        // 1b. Request signed upload ticket
         val ticketResponse = try {
             api.getUploadUrl(
                 UploadUrlRequestDto(

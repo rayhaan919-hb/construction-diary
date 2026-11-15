@@ -8,6 +8,8 @@ import com.sitediary.mobile.data.remote.dto.ExtractResponseDto
 import com.sitediary.mobile.data.remote.dto.LoginRequestDto
 import com.sitediary.mobile.data.remote.dto.LogoutRequestDto
 import com.sitediary.mobile.data.remote.dto.MediaCompleteRequestDto
+import com.sitediary.mobile.data.remote.dto.MediaReservationRequestDto
+import com.sitediary.mobile.data.remote.dto.MediaReservationResponseDto
 import com.sitediary.mobile.data.remote.dto.ProjectSummaryDto
 import com.sitediary.mobile.data.remote.dto.RefreshRequestDto
 import com.sitediary.mobile.data.remote.dto.SiteLogDto
@@ -63,6 +65,9 @@ interface SiteDiaryApi {
 
     @POST("/v1/logs/extract")
     suspend fun queueExtraction(@Body request: ExtractRequestDto): Response<ExtractResponseDto>
+
+    @POST("/v1/media/reservations")
+    suspend fun reserveMedia(@Body request: MediaReservationRequestDto): Response<MediaReservationResponseDto>
 
     @POST("/v1/media/upload-url")
     suspend fun getUploadUrl(@Body request: UploadUrlRequestDto): Response<UploadTicketDto>

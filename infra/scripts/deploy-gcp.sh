@@ -77,10 +77,10 @@ gcloud run deploy "${API_SERVICE}" \
 
 API_URL="$(gcloud run services describe "${API_SERVICE}" --region="${REGION}" --project="${PROJECT_ID}" --format='value(status.url)')"
 
-# Ensure Cloud Tasks callback and PUBLIC_API_BASE_URL match the actual deployed API HTTPS URL.
+# Ensure Cloud Tasks base URL (worker appends /v1/internal/tasks/extraction) and PUBLIC_API_BASE_URL match API_URL.
 gcloud run services update "${API_SERVICE}" \
   --region="${REGION}" \
-  --update-env-vars="PUBLIC_API_BASE_URL=${API_URL},CLOUD_TASKS_HANDLER_URL=${API_URL}/internal/tasks/extract" \
+  --update-env-vars="PUBLIC_API_BASE_URL=${API_URL},CLOUD_TASKS_HANDLER_URL=${API_URL}" \
   --project="${PROJECT_ID}"
 
 echo "==> [4/6] Deploying Web Cloud Run service '${WEB_SERVICE}'..."
@@ -113,7 +113,7 @@ if gcloud run jobs describe "${ALERTS_JOB}" --region="${REGION}" --project="${PR
     --region="${REGION}" \
     --service-account="${API_SA_EMAIL}" \
     --set-cloudsql-instances="${CLOUDSQL_CONNECTION}" \
-    --set-env-vars="ENV=${ENVIRONMENT},LOG_FORMAT=json,NOTIFIER=fcm" \
+    --set-env-vars="ENV=${ENVIRONMENT},LOG_FORMAT=json,NOTIFIER=fcm,STORAGE_BACKEND=gcs,GCS_BUCKET=${GCS_BUCKET}" \
     --set-secrets="DATABASE_URL=site-diary-database-url:latest,JWT_SECRET=site-diary-jwt-secret:latest,MEDIA_URL_SIGNING_SECRET=site-diary-media-url-signing-secret:latest" \
     --command="uv" \
     --args="run,python,-m,app.jobs.permit_alerts" \
@@ -124,7 +124,7 @@ else
     --region="${REGION}" \
     --service-account="${API_SA_EMAIL}" \
     --set-cloudsql-instances="${CLOUDSQL_CONNECTION}" \
-    --set-env-vars="ENV=${ENVIRONMENT},LOG_FORMAT=json,NOTIFIER=fcm" \
+    --set-env-vars="ENV=${ENVIRONMENT},LOG_FORMAT=json,NOTIFIER=fcm,STORAGE_BACKEND=gcs,GCS_BUCKET=${GCS_BUCKET}" \
     --set-secrets="DATABASE_URL=site-diary-database-url:latest,JWT_SECRET=site-diary-jwt-secret:latest,MEDIA_URL_SIGNING_SECRET=site-diary-media-url-signing-secret:latest" \
     --command="uv" \
     --args="run,python,-m,app.jobs.permit_alerts" \
@@ -132,6 +132,43 @@ else
 fi
 
 gcloud run jobs add-iam-policy-binding "${ALERTS_JOB}" \
+  --region="${REGION}" \
+  --member="serviceAccount:${SCHEDULER_SA_EMAIL}" \
+  --role="roles/run.invoker" \
+  --project="${PROJECT_ID}" >/dev/null
+
+# Optional production integrations (configure in Cloud Run / Secret Manager when enabling):
+#   Stripe: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_STARTER, STRIPE_PRICE_PRO, STRIPE_PRICE_ENTERPRISE
+#   Firebase Cloud Messaging (FCM): FCM_PROJECT_ID (uses Workload Identity / ADC or GOOGLE_APPLICATION_CREDENTIALS)
+#   SMTP Email Alerts: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
+#   Scheduled internal HTTP tasks (if invoking /v1/internal/tasks/media-cleanup over HTTP): SCHEDULER_SHARED_SECRET
+CLEANUP_JOB="${CLEANUP_JOB:-site-diary-media-cleanup}"
+echo "==> [5b/6] Updating media orphan cleanup Cloud Run Job '${CLEANUP_JOB}'..."
+if gcloud run jobs describe "${CLEANUP_JOB}" --region="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud run jobs update "${CLEANUP_JOB}" \
+    --image="${API_IMAGE}" \
+    --region="${REGION}" \
+    --service-account="${API_SA_EMAIL}" \
+    --set-cloudsql-instances="${CLOUDSQL_CONNECTION}" \
+    --set-env-vars="ENV=${ENVIRONMENT},LOG_FORMAT=json,STORAGE_BACKEND=gcs,GCS_BUCKET=${GCS_BUCKET}" \
+    --set-secrets="DATABASE_URL=site-diary-database-url:latest,JWT_SECRET=site-diary-jwt-secret:latest,MEDIA_URL_SIGNING_SECRET=site-diary-media-url-signing-secret:latest" \
+    --command="uv" \
+    --args="run,python,-m,app.jobs.media_cleanup" \
+    --project="${PROJECT_ID}"
+else
+  gcloud run jobs create "${CLEANUP_JOB}" \
+    --image="${API_IMAGE}" \
+    --region="${REGION}" \
+    --service-account="${API_SA_EMAIL}" \
+    --set-cloudsql-instances="${CLOUDSQL_CONNECTION}" \
+    --set-env-vars="ENV=${ENVIRONMENT},LOG_FORMAT=json,STORAGE_BACKEND=gcs,GCS_BUCKET=${GCS_BUCKET}" \
+    --set-secrets="DATABASE_URL=site-diary-database-url:latest,JWT_SECRET=site-diary-jwt-secret:latest,MEDIA_URL_SIGNING_SECRET=site-diary-media-url-signing-secret:latest" \
+    --command="uv" \
+    --args="run,python,-m,app.jobs.media_cleanup" \
+    --project="${PROJECT_ID}"
+fi
+
+gcloud run jobs add-iam-policy-binding "${CLEANUP_JOB}" \
   --region="${REGION}" \
   --member="serviceAccount:${SCHEDULER_SA_EMAIL}" \
   --role="roles/run.invoker" \

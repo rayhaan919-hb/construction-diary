@@ -35,6 +35,14 @@ def test_notes_photo_permit_extraction_and_stale_lease_recovery(
         b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
         b"rebar-photo\xff\xd9"
     )
+    assert (
+        client.post(
+            "/v1/media/reservations",
+            headers=supervisor_headers,
+            json={"kind": "PHOTO", "project_id": pid, "object_id": str(photo_id)},
+        ).status_code
+        == 201
+    )
     photo_ticket = client.post(
         "/v1/media/upload-url",
         headers=supervisor_headers,
@@ -231,13 +239,28 @@ def test_postgres_backup_and_restore_roundtrip(
     tmp_path: Path,
 ) -> None:
     del owner_user, sample_project
-    pg_bin_dir = Path(pg_commands.__file__).resolve().parent / "pginstall" / "bin"
-    pg_dump_bin = shutil.which("pg_dump") or str(pg_bin_dir / "pg_dump.exe")
-    psql_bin = shutil.which("psql") or str(pg_bin_dir / "psql.exe")
-    if not (Path(pg_dump_bin).exists() and Path(psql_bin).exists()):
-        # Non-Windows fallback binary names inside pgserver
-        pg_dump_bin = str(pg_bin_dir / "pg_dump")
-        psql_bin = str(pg_bin_dir / "psql")
+    import os
+    from urllib.parse import urlsplit, urlunsplit
+
+    candidate_dirs = [
+        Path(pg_commands.POSTGRES_BIN_PATH),
+        Path(pg_commands.__file__).resolve().parent / "pginstall" / "bin",
+    ]
+    pg_dump_bin: str | None = None
+    psql_bin: str | None = None
+    if not os.environ.get("TEST_DATABASE_URL"):
+        for pg_bin_dir in candidate_dirs:
+            for ext in (".exe", ""):
+                dump_candidate = pg_bin_dir / f"pg_dump{ext}"
+                psql_candidate = pg_bin_dir / f"psql{ext}"
+                if dump_candidate.exists() and psql_candidate.exists():
+                    pg_dump_bin = str(dump_candidate)
+                    psql_bin = str(psql_candidate)
+                    break
+            if pg_dump_bin and psql_bin:
+                break
+    pg_dump_bin = pg_dump_bin or shutil.which("pg_dump") or ""
+    psql_bin = psql_bin or shutil.which("psql") or ""
 
     assert Path(pg_dump_bin).exists(), f"pg_dump missing at {pg_dump_bin}"
     assert Path(psql_bin).exists(), f"psql missing at {psql_bin}"
@@ -270,7 +293,8 @@ def test_postgres_backup_and_restore_roundtrip(
         timeout=15,
         check=True,
     )
-    restore_uri = libpq_uri.rsplit("/", 1)[0] + f"/{restore_db}"
+    parsed_uri = urlsplit(libpq_uri)
+    restore_uri = urlunsplit(parsed_uri._replace(path=f"/{restore_db}"))
     try:
         restore_proc = subprocess.run(
             [psql_bin, "-v", "ON_ERROR_STOP=1", "-d", restore_uri, "-f", str(dump_file)],

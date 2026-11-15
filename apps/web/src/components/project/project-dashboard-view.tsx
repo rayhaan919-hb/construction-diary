@@ -514,6 +514,7 @@ export function ProjectDashboardView({
       </main>
 
       <PermitModal
+        key={permitModalOpen ? (editingPermit?.id ?? "new") : "closed"}
         open={permitModalOpen}
         projectId={projectId}
         editingPermit={editingPermit}

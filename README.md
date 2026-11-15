@@ -38,7 +38,7 @@ Monorepo implementing an offline-first construction site diary, permit expiry co
    cd apps/mobile
    ./gradlew testDebugUnitTest
    ```
-   - Firebase push alerts (`apps/mobile/app/google-services.json`) are optional for local development and CI; when absent, the Gradle plugin stays disabled and `FcmTokenManager` logs a warning and skips registration without crashing. See [DEPLOY.md](DEPLOY.md#8-mobile-appsmobile) for production FCM setup.
+   - Firebase push alerts (`apps/mobile/app/google-services.json`) are optional for local development and CI; when absent, the Gradle plugin stays disabled and `FcmTokenManager` logs a warning and skips registration without crashing. See [DEPLOY.md](DEPLOY.md#7-mobile-appsmobile--firebase-fcm-setup) for production FCM and Android release signing setup.
 
 See [DEPLOY.md](DEPLOY.md) for Cloud Run, Cloud SQL, GCS, and Cloud Scheduler deployment instructions.
 

@@ -357,3 +357,54 @@ class MediaStorageService:
     def write_local_bytes(self, object_key: str, data: bytes) -> Path:
         """Backward-compatible wrapper enforcing write-once object immutability."""
         return self.write_local_bytes_exclusive(object_key, data)
+
+    def list_object_keys(self, prefix: str = "projects/") -> list[tuple[str, datetime, int]]:
+        """Return ``(object_key, modified_at_utc, byte_size)`` entries under prefix."""
+        clean_prefix = prefix.lstrip("/")
+        if self.backend == "gcs":
+            client = self._get_gcs_client()
+            bucket = client.bucket(self.settings.GCS_BUCKET)
+            entries: list[tuple[str, datetime, int]] = []
+            for blob in bucket.list_blobs(prefix=clean_prefix):
+                mod = blob.updated or blob.time_created or datetime.now(UTC)
+                if mod.tzinfo is None:
+                    mod = mod.replace(tzinfo=UTC)
+                entries.append((str(blob.name), mod, int(blob.size or 0)))
+            return entries
+
+        base_dir = self.local_root / clean_prefix
+        if not base_dir.exists():
+            return []
+        entries = []
+        root_resolved = self.local_root
+        for item in base_dir.rglob("*"):
+            if not item.is_file():
+                continue
+            rel = item.resolve().relative_to(root_resolved).as_posix()
+            st = item.stat()
+            mod = datetime.fromtimestamp(st.st_mtime, tz=UTC)
+            entries.append((rel, mod, int(st.st_size)))
+        return entries
+
+    def delete_object(self, storage_uri_or_key: str) -> bool:
+        """Safely delete an unattached object from local or GCS storage."""
+        if storage_uri_or_key.startswith(("local://", "gs://")):
+            scheme, bucket, object_key = self.parse_storage_uri(storage_uri_or_key)
+        else:
+            scheme = self.backend
+            bucket = self.settings.GCS_BUCKET
+            object_key = storage_uri_or_key
+
+        if scheme == "gcs":
+            client = self._get_gcs_client()
+            blob = client.bucket(bucket or self.settings.GCS_BUCKET).blob(object_key)
+            if not blob.exists():
+                return False
+            blob.delete()
+            return True
+
+        path = self.safe_local_path(object_key)
+        if not path.is_file():
+            return False
+        path.unlink()
+        return True

@@ -1,3 +1,4 @@
+import dns from "node:dns/promises";
 import net from "node:net";
 import sharp from "sharp";
 import { getApiBaseUrl } from "@/lib/config";
@@ -40,6 +41,13 @@ function isPrivateOrDisallowedIp(ip: string): boolean {
   }
   if (net.isIPv6(ip)) {
     const lower = ip.toLowerCase();
+    if (lower.startsWith("::ffff:")) {
+      const mapped = lower.slice(7);
+      if (net.isIPv4(mapped)) {
+        return isPrivateOrDisallowedIp(mapped);
+      }
+      return true;
+    }
     if (lower === "::" || lower === "::1") return true;
     if (lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd")) {
       return true;
@@ -47,6 +55,19 @@ function isPrivateOrDisallowedIp(ip: string): boolean {
     return false;
   }
   return false;
+}
+
+async function resolvesToPrivateOrDisallowedIp(host: string): Promise<boolean> {
+  if (net.isIP(host)) {
+    return isPrivateOrDisallowedIp(host);
+  }
+  try {
+    const records = await dns.lookup(host, { all: true });
+    if (records.length === 0) return true;
+    return records.some((entry) => isPrivateOrDisallowedIp(entry.address));
+  } catch {
+    return true;
+  }
 }
 
 export function isSafeMediaFetchUrl(resolvedUrl: string): boolean {
@@ -93,6 +114,13 @@ async function fetchAndCompressPhoto(signedUrl: string): Promise<string | null> 
       const serverUrl = resolveServerMediaUrl(signedUrl);
       if (!isSafeMediaFetchUrl(serverUrl)) {
         return null;
+      }
+      const parsed = new URL(serverUrl);
+      const apiBase = new URL(getApiBaseUrl());
+      if (parsed.origin !== apiBase.origin) {
+        if (await resolvesToPrivateOrDisallowedIp(parsed.hostname)) {
+          return null;
+        }
       }
       const res = await fetch(serverUrl, {
         signal: controller.signal,

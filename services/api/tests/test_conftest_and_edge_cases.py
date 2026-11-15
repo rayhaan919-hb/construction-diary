@@ -240,3 +240,43 @@ def test_sync_pull_invalid_project_and_portfolio_rollup_deduplication(
     assert data["blockers"] == ["Crane delay"]
     assert data["tasks_completed"] == ["Rebar", "Formwork", "Pouring"]
     assert data["material_deliveries"] == ["Steel", "Cement"]
+
+
+def test_patch_site_log_notes_sets_edited_by_human(
+    client: TestClient,
+    db_session: Session,
+    sample_project: Project,
+    owner_headers: dict[str, str],
+) -> None:
+    now = datetime.now(UTC)
+    log = SiteLog(
+        id=uuid.uuid4(),
+        project_id=sample_project.id,
+        author_id=sample_project.created_by,
+        log_date=date(2026, 11, 14),
+        recorded_at=now,
+        notes="Initial field note",
+        edited_by_human=False,
+        client_updated_at=now,
+    )
+    db_session.add(log)
+    db_session.commit()
+
+    patched = client.patch(
+        f"/v1/logs/{log.id}",
+        headers=owner_headers,
+        json={"notes": "Updated field note"},
+    )
+    assert patched.status_code == 200
+    body = patched.json()
+    assert body["notes"] == "Updated field note"
+    assert body["edited_by_human"] is True
+
+    explicit_false = client.patch(
+        f"/v1/logs/{log.id}",
+        headers=owner_headers,
+        json={"notes": "Automated note reset", "edited_by_human": False},
+    )
+    assert explicit_false.status_code == 200
+    assert explicit_false.json()["edited_by_human"] is False
+

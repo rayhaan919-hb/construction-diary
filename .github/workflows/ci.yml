@@ -23,6 +23,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Validate deployment & DR shell scripts
+        run: bash -n infra/scripts/*.sh
+
   web:
     name: Owner Web Portal (apps/web)
     runs-on: ubuntu-latest
@@ -39,11 +42,35 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
 
       - run: npm ci
-      - run: npm audit --omit=dev --audit-level=critical
+
+      - name: Enforce zero HIGH/CRITICAL production dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Report development & production dependency audit summary
+        run: |
+          node -e '
+            const { execSync } = require("child_process");
+            let raw = "";
+            try {
+              raw = execSync("npm audit --json", { encoding: "utf8" });
+            } catch (err) {
+              raw = err.stdout || "{}";
+            }
+            const report = JSON.parse(raw || "{}");
+            const meta = (report.metadata && report.metadata.vulnerabilities) || {};
+            console.log("Total npm audit counts (prod + dev):", JSON.stringify(meta));
+            const vulns = report.vulnerabilities || {};
+            for (const [name, info] of Object.entries(vulns)) {
+              console.log(` - ${name}: severity=${info.severity}, range=${info.range}, fixAvailable=${Boolean(info.fixAvailable)}`);
+            }
+          '
+
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run build
+        env:
+          NEXT_PUBLIC_DEMO_MODE: "false"
 
   api:
     name: Backend & AI API (services/api)
@@ -77,17 +104,99 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: "21"
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: |
+            platform-tools
+            build-tools;36.0.0
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - run: chmod +x ./gradlew
-      - run: ./gradlew testDebugUnitTest lintDebug --no-daemon
-      - run: ./gradlew assembleRelease bundleRelease --no-daemon
+      - name: Detect production Android signing configuration
+        id: signing-config
         env:
-          RELEASE_API_BASE_URL: https://api.sitediary.example.com
+          PROD_API_BASE_URL: ${{ secrets.PROD_API_BASE_URL || vars.PROD_API_BASE_URL }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "${PROD_API_BASE_URL}" ] && [ -n "${ANDROID_KEYSTORE_BASE64}" ]; then
+            echo "has_prod_signing=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_prod_signing=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - run: chmod +x ./gradlew
+      - run: ./gradlew testDebugUnitTest lintDebug --no-daemon --console=plain
+
+      - name: Verify fail-closed production release gate when secrets are unset
+        if: steps.signing-config.outputs.has_prod_signing != 'true'
+        run: |
+          if ./gradlew bundleRelease --no-daemon --console=plain; then
+            echo "ERROR: bundleRelease must fail closed when PROD_API_BASE_URL or signing secrets are missing!" >&2
+            exit 1
+          fi
+          echo "Verified: bundleRelease fails closed without production URL & signing credentials."
+
+      - name: Build and verify signed production release (when signing secrets are configured)
+        if: steps.signing-config.outputs.has_prod_signing == 'true'
+        env:
+          PROD_API_BASE_URL: ${{ secrets.PROD_API_BASE_URL || vars.PROD_API_BASE_URL }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KEYSTORE_FILE="${RUNNER_TEMP}/android-release-signing.jks"
+          trap 'rm -f "${KEYSTORE_FILE}"' EXIT
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "${KEYSTORE_FILE}"
+          export ANDROID_KEYSTORE_PATH="${KEYSTORE_FILE}"
+          ./gradlew assembleRelease bundleRelease generateReleaseMetadata --no-daemon --console=plain
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -n 1)"
+          "${APKSIGNER}" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
+          jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab
+
+      - name: Build and verify signed staging APK & AAB (CI verification build)
+        if: steps.signing-config.outputs.has_prod_signing != 'true'
+        env:
+          STAGING_API_BASE_URL: https://staging-api.sitediary.internal
+          ANDROID_KEYSTORE_PASSWORD: ci-ephemeral-keystore-pass
+          ANDROID_KEY_ALIAS: sitediary-ci-staging
+          ANDROID_KEY_PASSWORD: ci-ephemeral-keystore-pass
+        run: |
+          KEYSTORE_FILE="${RUNNER_TEMP}/ci-staging-signing.jks"
+          trap 'rm -f "${KEYSTORE_FILE}"' EXIT
+          keytool -genkeypair -v -keystore "${KEYSTORE_FILE}" -storetype PKCS12 \
+            -storepass "${ANDROID_KEYSTORE_PASSWORD}" -keypass "${ANDROID_KEY_PASSWORD}" \
+            -alias "${ANDROID_KEY_ALIAS}" -keyalg RSA -keysize 2048 -validity 30 \
+            -dname "CN=SiteDiary CI Staging, OU=Engineering, O=SiteDiary, C=PK"
+          export ANDROID_KEYSTORE_PATH="${KEYSTORE_FILE}"
+          ./gradlew assembleStaging bundleStaging generateReleaseMetadata --no-daemon --console=plain
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -n 1)"
+          "${APKSIGNER}" verify --verbose --print-certs app/build/outputs/apk/staging/app-staging.apk
+          jarsigner -verify -verbose -certs app/build/outputs/bundle/staging/app-staging.aab
+          cat app/build/outputs/release-metadata/staging/build-metadata.json
+
+      - name: Stage signed build artifacts for upload
+        run: |
+          mkdir -p "${RUNNER_TEMP}/android-artifacts"
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk "${RUNNER_TEMP}/android-artifacts/"
+            cp app/build/outputs/bundle/release/app-release.aab "${RUNNER_TEMP}/android-artifacts/"
+            cp app/build/outputs/release-metadata/release/build-metadata.json "${RUNNER_TEMP}/android-artifacts/"
+          else
+            cp app/build/outputs/apk/staging/app-staging.apk "${RUNNER_TEMP}/android-artifacts/"
+            cp app/build/outputs/bundle/staging/app-staging.aab "${RUNNER_TEMP}/android-artifacts/"
+            cp app/build/outputs/release-metadata/staging/build-metadata.json "${RUNNER_TEMP}/android-artifacts/"
+          fi
+          if [ -f ../../RELEASE_NOTES.md ]; then
+            cp ../../RELEASE_NOTES.md "${RUNNER_TEMP}/android-artifacts/RELEASE_NOTES.md"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-signed-artifacts
+          path: ${{ runner.temp }}/android-artifacts/
+          retention-days: 7

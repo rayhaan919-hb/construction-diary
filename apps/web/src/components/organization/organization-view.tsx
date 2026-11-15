@@ -148,7 +148,11 @@ export function OrganizationView({
         body: JSON.stringify({ plan_tier: tier }),
       });
       if (res.checkout_url) {
-        window.location.assign(res.checkout_url);
+        const parsed = new URL(res.checkout_url, window.location.origin);
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+          throw new Error("Blocked unsafe checkout redirect protocol.");
+        }
+        window.location.assign(parsed.toString());
         return;
       }
       setBillingMessage(res.message);

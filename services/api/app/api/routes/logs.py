@@ -199,6 +199,7 @@ def update_site_log(
     fields_set = payload.model_fields_set
     if "notes" in fields_set:
         log.notes = payload.notes
+        log.edited_by_human = True
     if "transcript" in fields_set:
         log.transcript = payload.transcript
         log.edited_by_human = True

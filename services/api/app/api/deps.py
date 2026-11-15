@@ -95,7 +95,16 @@ def get_current_user(
         )
 
     token_version = payload.get("tv")
-    if isinstance(token_version, int) and token_version != int(user.token_version or 0):
+    current_version = int(user.token_version or 0)
+    if token_version is None:
+        version_mismatch = current_version > 0
+    else:
+        version_mismatch = (
+            isinstance(token_version, bool)
+            or not isinstance(token_version, int)
+            or token_version != current_version
+        )
+    if version_mismatch:
         raise ProblemException(
             status_code=401,
             code="TOKEN_REVOKED",

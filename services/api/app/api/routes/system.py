@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -15,6 +16,8 @@ from app.core.permissions import ORG_ADMIN_ROLES
 from app.core.rate_limit import metrics_collector
 from app.db.models import ExtractionJob, User
 from app.db.session import get_db
+from app.schemas.media import MediaCleanupRunResponse
+from app.services.media_cleanup import run_media_cleanup
 from app.services.storage import MediaStorageService
 
 router = APIRouter(tags=["system"])
@@ -177,7 +180,9 @@ def trigger_permit_alerts_cron(
 ) -> dict[str, int]:
     """Authenticated endpoint for Cloud Scheduler to trigger daily permit expiry alerts."""
     expected = settings.SCHEDULER_SHARED_SECRET.strip()
-    if not expected or not x_scheduler_secret or x_scheduler_secret != expected:
+    if not expected or not x_scheduler_secret or not hmac.compare_digest(
+        x_scheduler_secret, expected
+    ):
         raise ProblemException(
             status_code=403,
             code="FORBIDDEN",
@@ -188,3 +193,51 @@ def trigger_permit_alerts_cron(
 
     sent = run_permit_alerts(db, settings=settings)
     return {"alerts_dispatched": sent}
+
+
+@router.post("/v1/internal/tasks/media-cleanup", response_model=MediaCleanupRunResponse)
+def trigger_media_cleanup_task(
+    settings: Annotated[Settings, Depends(get_settings)],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[MediaStorageService, Depends(get_storage)],
+    dry_run: bool = False,
+    x_scheduler_secret: Annotated[str | None, Header(alias="X-Scheduler-Secret")] = None,
+    x_task_secret: Annotated[str | None, Header(alias="X-Task-Secret")] = None,
+) -> MediaCleanupRunResponse:
+    """Authenticated internal cron/Cloud Task endpoint for orphan media cleanup."""
+    expected_scheduler = settings.SCHEDULER_SHARED_SECRET.strip()
+    expected_task = settings.CLOUD_TASKS_SHARED_SECRET.strip()
+    if not expected_scheduler and not expected_task:
+        raise ProblemException(
+            status_code=503,
+            code="SERVICE_MISCONFIGURED",
+            title="Service Misconfigured",
+            detail="Scheduler or Cloud Tasks secret must be configured for media cleanup",
+        )
+    authorized = False
+    if expected_scheduler and x_scheduler_secret:
+        authorized = hmac.compare_digest(x_scheduler_secret, expected_scheduler)
+    if not authorized and expected_task and x_task_secret:
+        authorized = hmac.compare_digest(x_task_secret, expected_task)
+    if not authorized:
+        raise ProblemException(
+            status_code=403,
+            code="FORBIDDEN",
+            title="Forbidden",
+            detail="Invalid internal cleanup authorization",
+        )
+
+    run = run_media_cleanup(db, storage=storage, settings=settings, dry_run=dry_run)
+    return MediaCleanupRunResponse(
+        id=run.id,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        status=run.status,
+        dry_run=run.dry_run,
+        expired_tickets_cleaned=run.expired_tickets_cleaned,
+        expired_reservations_cleaned=run.expired_reservations_cleaned,
+        incomplete_uploads_cleaned=run.incomplete_uploads_cleaned,
+        unattached_objects_deleted=run.unattached_objects_deleted,
+        failed_jobs_pruned=run.failed_jobs_pruned,
+        bytes_reclaimed=run.bytes_reclaimed,
+    )

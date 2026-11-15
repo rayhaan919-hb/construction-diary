@@ -11,6 +11,8 @@ import com.sitediary.mobile.data.media.LocalMediaFileManager
 import com.sitediary.mobile.data.remote.SiteDiaryApi
 import com.sitediary.mobile.data.remote.dto.MediaCompleteRequestDto
 import com.sitediary.mobile.data.remote.dto.MediaKind
+import com.sitediary.mobile.data.remote.dto.MediaReservationRequestDto
+import com.sitediary.mobile.data.remote.dto.MediaReservationResponseDto
 import com.sitediary.mobile.data.remote.dto.MemberDto
 import com.sitediary.mobile.data.remote.dto.PermitDto
 import com.sitediary.mobile.data.remote.dto.ProjectDto
@@ -375,6 +377,20 @@ class SyncEngineTest {
             )
 
             val events = mutableListOf<String>()
+            coEvery { api.reserveMedia(any()) } coAnswers {
+                val req = firstArg<MediaReservationRequestDto>()
+                events += "reserve"
+                Response.success(
+                    MediaReservationResponseDto(
+                        reservationId = "res-1",
+                        kind = req.kind,
+                        projectId = req.projectId,
+                        objectId = req.objectId,
+                        status = "PENDING",
+                        expiresAt = "2026-11-14T13:00:00Z"
+                    )
+                )
+            }
             coEvery { api.getUploadUrl(any()) } coAnswers {
                 events += "upload-url"
                 Response.success(
@@ -425,6 +441,7 @@ class SyncEngineTest {
 
             assertEquals(
                 listOf(
+                    "reserve",
                     "upload-url",
                     "sync-push:local://projects/proj-1/audio/log-1.m4a",
                     "complete:AUDIO:log-1"
@@ -574,7 +591,21 @@ class SyncEngineTest {
                 )
             )
 
+            var reservedRequest: MediaReservationRequestDto? = null
             var capturedComplete: MediaCompleteRequestDto? = null
+            coEvery { api.reserveMedia(any()) } coAnswers {
+                reservedRequest = firstArg()
+                Response.success(
+                    MediaReservationResponseDto(
+                        reservationId = "res-123",
+                        kind = MediaKind.PERMIT_DOC,
+                        projectId = "proj-1",
+                        objectId = "perm-doc-1",
+                        status = "ACTIVE",
+                        expiresAt = "2026-11-14T13:00:00Z"
+                    )
+                )
+            }
             coEvery { api.getUploadUrl(any()) } returns Response.success(
                 UploadTicketDto(
                     ticketId = "ticket-123",
@@ -608,6 +639,9 @@ class SyncEngineTest {
 
             val outcome = uploader.uploadAllPending()
             assertEquals(SyncOutcome.Success, outcome)
+            assertEquals(MediaKind.PERMIT_DOC, reservedRequest?.kind)
+            assertEquals("proj-1", reservedRequest?.projectId)
+            assertEquals("perm-doc-1", reservedRequest?.objectId)
             assertEquals("ticket-123", capturedComplete?.ticketId)
             assertEquals(MediaKind.PERMIT_DOC, capturedComplete?.kind)
             assertEquals(64, capturedComplete?.sha256?.length)

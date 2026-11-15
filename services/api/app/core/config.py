@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     PASSWORD_RESET_TTL_MINUTES: int = 30
     RATE_LIMIT_REQUESTS_PER_MINUTE: int = 180
     RATE_LIMIT_AUTH_PER_MINUTE: int = 30
+    RATE_LIMIT_MEDIA_UPLOADS_PER_MINUTE: int = 60
     MAX_REQUEST_BODY_BYTES: int = 26_214_400
 
     # AI Extraction & Durable Queue
@@ -117,6 +118,9 @@ class Settings(BaseSettings):
     MEDIA_URL_SIGNING_SECRET: str = ""
     GCS_BUCKET: str = ""
     SIGNED_URL_TTL_SECONDS: int = 900
+    MEDIA_RESERVATION_TTL_SECONDS: int = 3600
+    MEDIA_ORPHAN_GRACE_SECONDS: int = 86400
+    MEDIA_FAILED_JOB_RETENTION_DAYS: int = 30
     GCP_SECRET_MANAGER_ENABLED: bool = False
     SECRET_MANAGER_PROJECT_ID: str = ""
 

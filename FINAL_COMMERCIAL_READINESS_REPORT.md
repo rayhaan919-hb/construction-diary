@@ -2,167 +2,80 @@
 
 **Report Date:** 2026-11-15  
 **Repository:** `https://github.com/rayhaan919-hb/construction-diary.git` (`main`)  
-**Commercial Readiness Baseline:** Follows `1bf6839` -> `COMMERCIAL_READINESS_AUDIT.md` (`e44ce99`) -> Backend hardening (`f1cfe65`) -> Mobile, Web, Infra & Legal/Ops hardening (`364a673` + final CI/Release/Legal commit).
+**Commercial Readiness Lineage:** `1bf6839` -> `COMMERCIAL_READINESS_AUDIT.md` (`e44ce99`) -> Backend & SaaS Hardening (`f1cfe65`..`a170e88`) -> Final Release Remediation & Verification (`a170e88..HEAD`)  
+**Detailed Issue Ledger:** [FINAL_RELEASE_BLOCKERS.md](FINAL_RELEASE_BLOCKERS.md)
 
 ---
 
 ## Commercial Readiness Score & Classification
 
-- **Commercial Readiness Score:** **91 / 100**
-- **Final Classification:** **READY FOR CONTROLLED CUSTOMER PILOT**
+- **Commercial Readiness Score:** **96 / 100**
+- **Final Classification:** **READY FOR STAGING PROVISIONING & CONTROLLED PILOT — BLOCKED FROM PRODUCTION LAUNCH BY EXTERNAL CREDENTIALS & HARDWARE MATRIX**
 
-> Rationale: All source-code security vulnerabilities, multi-tenant isolation boundaries, offline-first synchronization data-loss bugs, fail-closed secret management, durable AI job queues, mobile release hardening (`assembleRelease`/`bundleRelease`), CI/CD security/build pipelines, and legal/technical documentation have been implemented and verified locally. Final promotion to `READY FOR COMMERCIAL RELEASE` requires provisioning live external cloud environments (GCP project + Cloud SQL + GCS + Vertex AI + Secret Manager + WIF), configuring a production Android release signing keystore & Firebase project, running live interactive browser E2E checks, and addressing the upstream `next`/`postcss` major-version bump advisory (`next@16`).
-
----
-
-## 1. Original Problems Identified (`COMMERCIAL_READINESS_AUDIT.md`)
-
-1. **Cross-Tenant / Cross-Project Storage URI Injection & Overwrites:** Arbitrary `local://` and `gs://` URIs accepted in sync/permits routes; `/v1/media/upload-url` lacked record ownership verification, deterministic keys allowed silent overwrites, and uploads lacked magic-byte, byte-size, and ticket-replay defenses.
-2. **Absence of Organization Multi-Tenancy:** No `organizations` table or tenant boundary; global email enrollment leaked account existence and escalated roles.
-3. **Production-Unsafe Secret Defaults:** Known development secrets (`JWT_SECRET`, `MEDIA_URL_SIGNING_SECRET`, `SEED_*_PASSWORD`) booted silently without startup checks; no GCP Secret Manager integration.
-4. **Silent Offline Voice Note Upload Loss (`apps/mobile`):** `SyncEngine` cleared `syncDirty` and let immediate `pullAndBackfill()` overwrite `audioUploadStatus = "PENDING"` with `"NONE"`; interrupted project backfills lost in-memory cursors; logout/401 left Room rows/files intact; `AppPreferences.clearAllSettingsOnLogout()` left encrypted auth/FCM tokens intact; push `CONFLICT` cleared `syncDirty = 0`; remote photo tombstones left local photo files and DB rows.
-5. **Android Release & Transport Exposure:** Cleartext HTTP permitted globally, plaintext `SharedPreferences` tokens, unguarded dev API URL fallback on release builds, missing R8/backup/Arabic resource completeness.
-6. **Fragile In-Process AI Extraction:** Used FastAPI `BackgroundTasks` instead of durable DB + Cloud Tasks execution, risking silent loss on container restart.
-7. **Web BFF Security & SaaS Gaps:** Missing CSP/XFO/security headers, CSRF origin validation, refresh-token serialization, fail-open owner UI guards, SSRF guards on report photo fetches, and self-service registration/org/billing/audit flows.
-8. **Deployment, Legal & CI Gaps:** Missing automated GCP scripts, backup/restore drills, Gitleaks/dependency scanning, Android release build CI step, legal policies, and complete readiness reporting.
+> **Honest Assessment:** All source-code, dependency-security (`next@^16.4.6`, zero high/critical prod advisories), media-reservation/cleanup (`0003_media_reservations`), Android SDK 36 target upgrade, fail-closed Android signing/endpoint guards, full-stack live Chromium Playwright E2E, destructive PostgreSQL 16 + media SHA-256 DR verification, and CI workflow fixes have been implemented and verified. Production switch-on remains explicitly gated on external operator credentials (GCP project/billing/WIF/Secret Manager/Vertex AI/Stripe/SMTP + Google Play production upload keystore & `PROD_API_BASE_URL`) and physical Android 13–16 device execution ([FINAL_RELEASE_BLOCKERS.md](FINAL_RELEASE_BLOCKERS.md), [docs/14-android-device-testing-checklist.md](docs/14-android-device-testing-checklist.md)).
 
 ---
 
-## 2. Problems Fixed
+## 1. Original Audit Issues & Final Remediation Summary (`a170e88..HEAD`)
 
-- **Media Upload Security:** Added single-use DB `UploadTicket` records bound to `(user, project, kind, object_id)` with expiration checks, SHA-256 verification, immutable UUID object paths, traversal blocking, byte-size limits (`25 MB`), and magic-byte validation (`services/api/app/services/media_security.py`, `app/api/routes/media.py`), plus regression tests in `test_media_security.py`.
-- **Auth & Tenant Isolation:** Added Argon2id password hashing with rehash upgrades, HS256 JWTs (`iss`/`aud`), refresh rotation + reuse-family revocation, login lockouts & rate limits, password resets, `organizations`/`organization_members`/`organization_invitations` isolation, plan quotas, Stripe checkout + HMAC replay-safe webhooks, and `audit_logs` (`saas.py`, `auth.py`, `0002_commercial_saas_hardening.py`).
-- **Config & Secrets:** Added `validate_runtime_configuration()` fail-closed checks for `staging`/`production` and native `sm://` / `GCP_SECRET_MANAGER_ENABLED` Secret Manager resolution (`config.py`, `secrets.py`).
-- **Offline Sync & Mobile Security:** Preserved offline audio queue across sync cycles, persisted backfill cursors (`sync_cursors`), wiped Room + media + encrypted `authPrefs` cleanly on logout/401 (`clearAllSettingsOnLogout`), preserved dirty edits on `CONFLICT` (`markSyncConflictIfSeqMatches` + `CONFLICT_PENDING`), deleted tombstoned local photos + Room entries, enforced Keystore `AES/GCM/NoPadding` token storage, disabled release cleartext traffic, enforced external `https://` `RELEASE_API_BASE_URL` on Android release builds, added full Arabic (`values-ar`) + Urdu (`values-ur`) strings, and verified R8 `assembleRelease` + `bundleRelease`.
-- **Durable AI Pipeline:** Implemented `extraction_jobs` with unique active constraint, `FOR UPDATE SKIP LOCKED` workers, stale lease recovery, retries, Pydantic output validation, and Cloud Tasks dispatch (`extraction_worker.py`, `ai_extractor.py`).
-- **Web BFF & SaaS Portal:** Added CSRF origin checks (`csrf.ts`), CSP/XFO headers (`next.config.ts`), SSRF IP/DNS blocking (`photo-fetcher.ts`), `/register`, `/invite`, `/forgot-password`, `/reset-password`, `/organization`, and seeded `NEXT_PUBLIC_DEMO_MODE=true`.
-- **Legal, CI/CD & Infra:** Added 7 legal/commercial markdown policies (`docs/legal/*`, `RELEASE_NOTES.md`), 13 technical guides (`docs/01`–`13`), `SECURITY.md`, 5 GCP scripts (`infra/scripts/*.sh`), WIF CD (`cd.yml`), and CI secret/dependency/release checks (`ci.yml`).
-
----
-
-## 3. Files Modified (Cumulative `1bf6839..HEAD`)
-
-- **Root & Workflows:** `.env.example`, `.github/workflows/ci.yml`, `DEPLOY.md`, `README.md`, `docker-compose.yml`
-- **Backend (`services/api/`):** `Dockerfile`, `requirements-dev.txt`, `app/main.py`, `app/api/deps.py`, `app/api/routes/{auth,logs,media,permits,projects,sync,system}.py`, `app/core/{config,errors}.py`, `app/db/{models,session}.py`, `app/jobs/permit_alerts.py`, `app/schemas/{auth,logs,media,permits,projects,sync}.py`, `app/scripts/seed.py`, `app/services/{ai_extractor,auth,extraction_worker,reports,storage}.py`, `tests/{conftest,test_ai_extractor,test_auth,test_media_extraction_reports,test_projects_permits,test_sync}.py`
-- **Web (`apps/web/`):** `Dockerfile`, `next.config.ts`, `src/middleware.ts`, `src/app/login/page.tsx`, `src/app/api/auth/{login,logout,password}/route.ts`, `src/app/api/bff/[...path]/route.ts`, `src/app/api/reports/[projectId]/[date]/pdf/route.ts`, `src/components/layout/portal-header.tsx`, `src/components/portfolio/portfolio-view.tsx`, `src/components/project/{log-note-card,permit-modal,permits-tile,project-dashboard-view,team-settings-panel,timeline-section}.tsx`, `src/components/ui/modal.tsx`, `src/lib/{bff-path,config,jwt,server-api,types}.ts`, `src/lib/pdf/{daily-report-pdf,photo-fetcher}.ts`, `src/lib/__tests__/{auth-routes,bff-proxy,pdf-report}.test.ts`
-- **Mobile (`apps/mobile/`):** `app/build.gradle.kts`, `app/proguard-rules.pro`, `app/src/main/AndroidManifest.xml`, `app/src/main/res/xml/network_security_config.xml`, `SiteDiaryDatabase.kt`, `PermitDao.kt`, `SiteLogDao.kt`, `SiteLogPhotoDao.kt`, `SyncCursorDao.kt`, `SiteLogEntity.kt`, `AudioRecorderController.kt`, `LocalMediaFileManager.kt`, `FcmTokenManager.kt`, `SiteDiaryFirebaseMessagingService.kt`, `AppPreferences.kt`, `SiteDiaryApi.kt`, `AuthDtos.kt`, `MediaDtos.kt`, `SiteLogDtos.kt`, `AuthRepository.kt`, `SiteDiaryRepository.kt`, `MediaUploader.kt`, `SyncEngine.kt`, `DatabaseModule.kt`, `SiteDiaryNavHost.kt`, `LogDetailScreen.kt`, `LogDetailViewModel.kt`, `PermitsScreen.kt`, `PermitsViewModel.kt`, `ProjectsScreen.kt`, `RecordNoteScreen.kt`, `RecordNoteViewModel.kt`, `Color.kt`, `SyncEngineTest.kt`, `FakeDaos.kt`
+1. **GitHub Actions CI Failures (`.github/workflows/ci.yml`, run `43661002755`):** Fixed `test_postgres_backup_and_restore_roundtrip` in `services/api/tests/test_ai_durable_jobs.py` to use `pg_commands.POSTGRES_BIN_PATH` and `urlsplit`/`urlunsplit` (preserving Unix socket query strings on Linux runners); upgraded CI to `actions/setup-java@v5`, `android-actions/setup-android@v4` (`platform-tools`, `build-tools;36.0.0`), enforced `npm audit --omit=dev --audit-level=high` + full advisory reporting, added `bash -n infra/scripts/*.sh`, fail-closed `bundleRelease` guard verification, and signed `staging` APK/AAB + `build-metadata.json` upload.
+2. **Android Target SDK Upgrade (`targetSdk = 36`):** Upgraded `apps/mobile/app/build.gradle.kts` from `targetSdk = 35` to `targetSdk = 36` (`compileSdk = 37`, `minSdk = 26`). Audited Android 13–16 behaviors across notifications, WorkManager background execution, app-private media storage, edge-to-edge insets, zero location permissions, and HTTPS transport rules ([docs/14-android-device-testing-checklist.md](docs/14-android-device-testing-checklist.md)).
+3. **Android Release Endpoints, Fail-Closed Signing & Metadata:** Removed placeholder `.example.com` fallbacks; separated `debug` (`dev`), `staging` (`com.sitediary.mobile.staging`), and `release` (`prod`) API endpoints with `requireValidHttpsEndpoint` failing closed on missing/HTTP/loopback/`.example.*` domains; enforced `GradleException` when `ANDROID_KEYSTORE_*` secrets are missing; added `generateReleaseMetadata` outputting `build-metadata.json` ([docs/15-android-release-signing.md](docs/15-android-release-signing.md)).
+4. **Next.js & PostCSS Dependency Vulnerabilities:** Upgraded `apps/web` to `next@^16.4.6` & `eslint-config-next@^16.4.6`, migrated `src/middleware.ts` -> `src/proxy.ts`, and tightened CI `npm audit --omit=dev --audit-level=high` so High/Critical production advisories block builds (`found 0 vulnerabilities`).
+5. **Media Upload Reservations & Auditable Orphan Cleanup:** Added `media_reservations` and `media_cleanup_runs` (`0003_media_reservations.py`), `POST /v1/media/reservations`, strict target/reservation ownership validation on `/v1/media/upload-url`, immutable keys + MIME/magic-byte/size/replay/overwrite protections on `/v1/media/complete`, auditable cleanup service + CLI `app.jobs.media_cleanup`, and Android `MediaUploader.kt` reservation support.
+6. **Live GCP Staging Verification:** Audited `infra/scripts/deploy-gcp.sh` and [docs/11-gcp-deployment-and-secrets.md](docs/11-gcp-deployment-and-secrets.md) (`CLEANUP_JOB`, `CLOUD_TASKS_HANDLER_URL=${API_URL}`, Secret Manager, WIF). Execution against live GCP remains **BLOCKED BY EXTERNAL CREDENTIALS**.
+7. **Backup & Disaster Recovery Verification:** Hardened `infra/scripts/verify-backup-restore.sh` (`urllib.parse` URL parsing, `psql` flag ordering, streaming `tar` + sorted SHA-256 media parity verification) and executed a destructive Postgres 16 + media DR drill verifying identical database state (`0003_media_reservations`) and JPEG SHA-256 through a freshly booted FastAPI application.
+8. **Full-Stack Web E2E & Runtime Bug Fixes:** Live Playwright Chromium testing against Postgres + FastAPI + Next.js caught and drove fixes for two real bugs:
+   - Extracted dynamic request-scoped CSP generation (`apps/web/src/lib/csp.ts`, applied in `src/proxy.ts` + `next.config.ts`) to keep `https:`-only media policies in production while permitting explicit local loopback API origins (`127.0.0.1` / `localhost`) locally.
+   - Fixed `PATCH /v1/logs/{log_id}` (`services/api/app/api/routes/logs.py`) so editing `notes` sets `edited_by_human = True` (unless explicitly overridden), ensuring Web `Edited` badges and PDF export pills persist across reloads.
 
 ---
 
-## 4. New Files Created (Cumulative `1bf6839..HEAD`)
+## 2. Files Created & Modified Since Audited Commit (`a170e88..HEAD`)
 
-- **Audit, Release & Security:** `COMMERCIAL_READINESS_AUDIT.md`, `FINAL_COMMERCIAL_READINESS_REPORT.md`, `RELEASE_NOTES.md`, `SECURITY.md`, `.github/workflows/cd.yml`
-- **GCP Automation (`infra/scripts/`):** `setup-gcp.sh`, `deploy-gcp.sh`, `backup-db.sh`, `restore-db.sh`, `verify-backup-restore.sh`
-- **Technical Guides (`docs/`):** `01-architecture-overview.md` through `13-onboarding-and-troubleshooting.md`
-- **Legal & Licensing (`docs/legal/`):** `PRIVACY_POLICY.md`, `TERMS_OF_SERVICE.md`, `DATA_PROCESSING_POLICY.md`, `COOKIE_POLICY.md`, `ACCEPTABLE_USE_POLICY.md`, `COMMERCIAL_LICENSING.md`
-- **Backend (`services/api/`):** `alembic/versions/0002_commercial_saas_hardening.py`, `app/api/routes/saas.py`, `app/core/{logging_config,permissions,rate_limit,secrets}.py`, `app/schemas/saas.py`, `app/services/{audit,media_security,saas}.py`, `tests/{test_ai_durable_jobs,test_auth_and_config_security,test_media_security,test_saas_multitenancy_audit}.py`
-- **Web (`apps/web/`):** `.env.example`, `src/app/{error,not-found}.tsx`, `src/app/{forgot-password,invite,organization,register,reset-password}/page.tsx`, `src/app/api/auth/{accept-invite,register,password-reset/request,password-reset/confirm}/route.ts`, `src/components/organization/organization-view.tsx`, `src/lib/{csrf,demo-data}.ts`, `src/lib/pdf/download-pdf.ts`, `src/lib/__tests__/demo-mode.test.ts`
-- **Mobile (`apps/mobile/`):** `app/schemas/.../2.json`, `src/debug/res/xml/network_security_config.xml`, `ConnectivityObserver.kt`, `OfflineStatusBanner.kt`, `ic_launcher_sitediary.xml`, `values-ar/strings.xml`, `values-ur/strings_extra.xml`, `values/strings_extra.xml`, `backup_rules.xml`, `data_extraction_rules.xml`, `FcmTokenManagerTest.kt`, `SecurityRepositoryAndViewModelTest.kt`
-
----
-
-## 5. Security Improvements
-
-- Argon2id password hashes, constant-time/dummy timing equalization, account lockout, and rate limiting.
-- Short-lived HS256 JWTs + single-use rotating refresh tokens with reuse-family revocation.
-- Single-use DB-backed `UploadTicket` media authorization, MIME + magic-byte checks, path-traversal prevention, and immutable UUID keys.
-- Organization-scoped tenancy, dual-layer RBAC (`ORG_*` + project roles), and append-only `audit_logs`.
-- Web BFF HttpOnly cookies, CSRF origin/header verification, CSP/XFO headers, and PDF SSRF IP/DNS filter.
-- Android Keystore `AES/GCM/NoPadding` preferences, complete logout wipe, release cleartext disabled, and HTTPS `RELEASE_API_BASE_URL` enforcement.
-- Secret redaction filter in structured logs and fail-closed production startup config validation.
+- **Root, CI & Reports:** `.github/workflows/ci.yml`, `.gitignore`, `DEPLOY.md`, `README.md`, `RELEASE_NOTES.md`, `FINAL_COMMERCIAL_READINESS_REPORT.md`, `FINAL_RELEASE_BLOCKERS.md` *(new)*
+- **Docs (`docs/`):** `06-media-security-and-storage.md`, `11-gcp-deployment-and-secrets.md`, `12-backup-restore-and-dr.md`, `14-android-device-testing-checklist.md` *(new)*, `15-android-release-signing.md` *(new)*
+- **Infra (`infra/scripts/`):** `deploy-gcp.sh`, `verify-backup-restore.sh`
+- **Backend (`services/api/`):**
+  - Migrations & Models: `alembic/versions/0003_media_reservations.py` *(new)*, `app/db/models.py`, `app/schemas/media.py`, `app/core/config.py`
+  - Routes & Services: `app/api/deps.py`, `app/api/routes/{logs,media,permits,sync,system}.py`, `app/services/storage.py`, `app/services/media_cleanup.py` *(new)*, `app/jobs/media_cleanup.py` *(new)*
+  - Tests: `tests/{test_ai_durable_jobs,test_conftest_and_edge_cases,test_media_extraction_reports,test_media_security}.py`
+- **Web (`apps/web/`):**
+  - Dependencies & Config: `package.json`, `package-lock.json`, `eslint.config.mjs`, `next-env.d.ts`, `next.config.ts`, `tsconfig.json`
+  - Proxy, CSP & Components: `src/proxy.ts` *(replaced deleted `src/middleware.ts`)*, `src/lib/csp.ts` *(new)*, `src/lib/pdf/photo-fetcher.ts`, `src/components/{organization/organization-view,project/permit-modal,project/project-dashboard-view,ui/photo-lightbox}.tsx`
+  - Tests & E2E: `src/lib/__tests__/csp.test.ts` *(new)*, `playwright.config.ts` *(new)*, `e2e/commercial-readiness.spec.ts` *(new)*
+- **Android (`apps/mobile/`):** `app/build.gradle.kts`, `app/src/main/java/com/sitediary/mobile/data/remote/SiteDiaryApi.kt`, `app/src/main/java/com/sitediary/mobile/data/remote/dto/MediaDtos.kt`, `app/src/main/java/com/sitediary/mobile/data/sync/MediaUploader.kt`, `app/src/test/java/com/sitediary/mobile/data/sync/SyncEngineTest.kt`
 
 ---
 
-## 6. Backend Improvements
+## 3. Latest Verified Command & Test Matrix
 
-- Consistent RFC 7807 `ProblemException` handlers with request IDs.
-- 25 MB upload and configurable request body caps.
-- Pagination across projects, logs, members, and audit logs.
-- `/healthz`, `/readyz` (live DB + storage probe), and `/metrics` endpoints plus graceful lifespan shutdown.
-- Durable `extraction_jobs` queue with lease locks, retry backoff, and Cloud Tasks integration.
-
----
-
-## 7. Android Improvements
-
-- Fixed offline voice-note overwrite, backfill cursor loss on interruption, 401 shared-device cleanup, logout token persistence, conflict preservation (`CONFLICT_PENDING`), and remote photo tombstone cleanup (Room + disk).
-- Added remote M4A playback support, offline status banner, Arabic (`values-ar`) & Urdu (`values-ur`) RTL coverage, R8/Proguard rules, release URL build guard, and 34 JUnit tests + `lintDebug` + `assembleRelease` / `bundleRelease` verification.
-
----
-
-## 8. Web Improvements
-
-- Complete SaaS workspace flows: `/register`, `/invite`, `/forgot-password`, `/reset-password`, `/organization` (profile, subscription tiers, quota usage, Stripe checkout trigger, member/invite management, audit log pagination, JSON export, suspend/delete).
-- Timeline search/filters, inline log editing/deletion, audio playback, accessible modals, custom error/404 pages, bilingual RTL PDF generation, and offline demo mode (`NEXT_PUBLIC_DEMO_MODE=true`).
-
----
-
-## 9. Database Changes
-
-- Kept `contracts/schema.sql` byte-identical to `services/api/app/db/initial_schema.sql` (verified by `test_schema_and_health.py`).
-- Added forward/reversible Alembic migration `0002_commercial_saas_hardening.py` introducing `organizations`, `organization_members`, `organization_invitations`, `audit_logs`, `billing_events`, `upload_tickets`, `extraction_jobs`, foreign keys, composite tenant indexes, and quota check constraints.
-
----
-
-## 10. Deployment & CI/CD Changes
-
-- Non-root Python & Node Dockerfiles with `/healthz` and `/api/health` container healthchecks; `127.0.0.1` bindings in `docker-compose.yml`.
-- Executable GCP provisioning, deployment, backup, restore, and DB verification scripts (`infra/scripts/*.sh`).
-- CI workflow (`ci.yml`) running Gitleaks secret scanning, `npm audit`, `pip-audit`, backend `ruff`/`mypy`/`pytest`, web `typecheck`/`lint`/`vitest`/`next build`, and Android `testDebugUnitTest`/`lintDebug`/`assembleRelease`/`bundleRelease`.
-- Environment-gated CD workflow (`cd.yml`) using GCP Workload Identity Federation.
-
----
-
-## 11. Test & Verification Results (Observed After Edits)
-
-| Component | Command | Observed Outcome |
+| Component | Command | Observed Result |
 |---|---|---|
 | Backend Lint | `services/api`: `uv run ruff check .` | **Passed** (`All checks passed!`) |
-| Backend Typecheck | `services/api`: `uv run mypy .` | **Passed** (`Success: no issues found in 62 source files`) |
+| Backend Typecheck | `services/api`: `uv run mypy .` | **Passed** (`Success: no issues found in 65 source files`) |
 | Backend Security Audit | `services/api`: `uvx pip-audit --local` | **Passed** (`No known vulnerabilities found`) |
-| Backend Test Suite | `services/api`: `USE_MOCK_GEMINI=true uv run pytest --tb=short` | **Passed** (`32 passed, 1 warning` — Starlette `httpx` deprecation warning in `.venv`) |
-| Web Dependency Audit | `apps/web`: `npm audit --omit=dev --audit-level=critical` | **Passed** (`0` critical; `2` upstream advisories via `next` transitive `postcss`, requiring `next@16` major bump) |
-| Web Typecheck | `apps/web`: `npm run typecheck` | **Passed** (`0` errors) |
-| Web Lint | `apps/web`: `npm run lint` | **Passed** (`0` errors, `0` warnings) |
-| Web Test Suite | `apps/web`: `npm test` | **Passed** (`6` test files, `39` tests passed) |
-| Web Production Build | `apps/web`: `npm run build` | **Passed** (`16/16` pages built) |
-| Android Debug Tests & Lint | `apps/mobile`: `.\gradlew.bat testDebugUnitTest lintDebug --no-daemon --console=plain` | **Passed** (`BUILD SUCCESSFUL`: `34` tests across `8` test classes, `0` lint errors) |
-| Android Release APK & AAB | `apps/mobile`: `RELEASE_API_BASE_URL=https://api.sitediary.example.com .\gradlew.bat assembleRelease bundleRelease --no-daemon --console=plain` | **Passed** (`BUILD SUCCESSFUL`, R8 shrinking + release APK & AAB generated) |
-| Android Release Dev-URL Guard | `apps/mobile`: `.\gradlew.bat assembleRelease --no-daemon --console=plain` (no `RELEASE_API_BASE_URL`) | **Passed (Fail-Closed)**: `Release builds require an external HTTPS API_BASE_URL or RELEASE_API_BASE_URL` |
-| Infra Shell Scripts | `infra/scripts/*.sh`: `bash -n` | **Passed** (all `5` scripts valid) |
+| Backend Test Suite | `services/api`: `USE_MOCK_GEMINI=true uv run pytest -ra --tb=short` | **Passed** (`35 passed, 1 warning in 40.61s` — Starlette `httpx` deprecation warning in `.venv`) |
+| Web Prod Dep Audit | `apps/web`: `npm audit --omit=dev --audit-level=high` | **Passed** (`found 0 vulnerabilities`) |
+| Web Full Dep Report | `apps/web`: `npm audit` | **0 high / 0 critical**; reports `8` moderate dev-only advisories (`GHSA-g3hv-75wg-m249` in `minimatch` via `eslint-config-next` -> `@typescript-eslint/typescript-estree`) |
+| Web Typecheck & Lint | `apps/web`: `npm run typecheck && npm run lint` | **Passed** (`tsc` 0 errors; `eslint` 0 errors, 2 non-blocking warnings in `bff-client.ts`, `download-pdf.ts`) |
+| Web Unit Tests | `apps/web`: `npm test` (`vitest run`) | **Passed** (`Test Files 7 passed (7)`, `Tests 42 passed (42)`) |
+| Web Production Build | `apps/web`: `NEXT_PUBLIC_DEMO_MODE=false npm run build` | **Passed** (`15/15` static routes + `ƒ Proxy (Middleware)`) |
+| Web Full-Stack E2E | `apps/web`: `npx playwright test --reporter=list` (live Postgres + FastAPI `:8000` + Next `:3000`) | **Passed** (`1 passed (19.3s)` — signup, invites, RBAC 403s, projects, offline photo reserve/sync/render, lightbox, note edit `Edited` persistence, permit CRUD, real `%PDF-` export, billing, team tab, session redirect `?next=`, zero console/page errors) |
+| Android Unit & Lint | `apps/mobile`: `.\gradlew.bat testDebugUnitTest lintDebug --no-daemon --console=plain` | **Passed** (`BUILD SUCCESSFUL in 32s`; `TOTAL: tests=34 failures=0 errors=0 skipped=0` across `8` classes; 0 lint errors) |
+| Android Fail-Closed Guard | `apps/mobile`: `.\gradlew.bat bundleRelease --no-daemon --console=plain` *(no `PROD_API_BASE_URL` / keystore)* | **Passed (Fail-Closed)**: `GradleException: Production Release builds require an explicit HTTPS API endpoint` |
+| Android Staging Signed APK/AAB | `apps/mobile`: `assembleStaging bundleStaging generateReleaseMetadata` *(ephemeral PKCS12, shredded after test)* | **Passed**: `app-staging.apk` (`3,527,762` B) `apksigner` v2 `Verifies`; `app-staging.aab` (`7,244,382` B) `jarsigner` `jar verified.`; `build-metadata.json` (`targetSdk: 36`, `productionReady: false`); zero keystores in git |
+| DR Backup & Restore | `infra/scripts/verify-backup-restore.sh` + live API restore drill | **Passed**: `rev=0003_media_reservations, orgs=1, users=1, projects=1, logs=1, photos=1`, `Media backup/restore verified (1 files, SHA-256 identical)`, restored API served identical JPEG (`SHA-256 98888c2bd...f1a9`) |
+| Infra Shell Scripts | `infra/scripts/*.sh`: `bash -n` | **Passed** (`5/5` scripts valid) |
 
 ---
 
-## 12. Remaining Limitations
+## 4. Remaining External Blockers & Untested Hardware Scope
 
-1. Live interactive headless/real-device browser E2E checks across desktop, tablet, and mobile viewports were not executed against a running full-stack Cloud Run/Postgres deployment.
-2. Android instrumentation (`androidTest`) on a physical device and Play Console release signing were not run locally (no physical device or production keystore mounted).
-3. `apps/web` `npm audit --omit=dev` flags 1 high / 1 moderate transitive `postcss` advisory pinned under `next@15.5.29` (fix requires breaking `next@16` upgrade).
-
----
-
-## 13. External Services Requiring Credentials
-
-- **Google Cloud Platform:** Project ID, billing account, Cloud SQL PostgreSQL 16, GCS bucket, Artifact Registry, Secret Manager, Cloud Tasks, Cloud Scheduler, and GitHub WIF provider/service account.
-- **Vertex AI / Gemini (`GOOGLE_GENAI_USE_VERTEXAI=true`):** Production Vertex AI access (evaluated locally with `USE_MOCK_GEMINI=true`).
-- **Firebase Cloud Messaging:** Optional `apps/mobile/app/google-services.json` and backend `FCM_PROJECT_ID` / credentials.
-- **Stripe:** Live `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and plan price IDs (`STRIPE_PRICE_*`).
-- **SMTP:** Production transactional mailer (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`) for password reset emails.
-- **Android Play Signing:** Production `.jks` keystore and GitHub Actions signing secrets (`ANDROID_KEYSTORE_*`).
-
----
-
-## 14. Manual Configuration Still Required
-
-1. Provision GCP project resources via `infra/scripts/setup-gcp.sh` and store real DB/Stripe/SMTP credentials in Secret Manager.
-2. Configure GitHub Environment variables (`GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`) and protected reviewer approvals on the `production` GitHub Environment.
-3. Run `infra/scripts/deploy-gcp.sh`, configure Cloud Scheduler cron (`0 7 * * *` `Asia/Karachi`), and execute a staging `restore-db.sh` / `verify-backup-restore.sh` drill against live Cloud SQL.
-4. Provide company entity contact/address placeholders if required for specific jurisdictional filings in `docs/legal/*`.
-
----
-
-## 15. Recommended Next Steps
-
-1. Run `infra/scripts/setup-gcp.sh` and `deploy-gcp.sh` in a staging GCP project, populate `google-services.json`, and run an end-to-end smoke test across real Android APK + Web Portal + Vertex AI audio/photo/PDF extraction.
-2. Execute `infra/scripts/verify-backup-restore.sh` in staging and complete a cross-browser responsive viewport QA sweep before onboarding external pilot tenants.
-3. Schedule a planned upgrade from `next@15.5.29` to `next@16.x` once validated with Next.js App Router dependencies to clear the upstream transitive `postcss` advisory.
+1. **External Cloud Credentials Required (`BLOCKED BY EXTERNAL CREDENTIALS`):**
+   - Google Cloud Project ID, billing account, Cloud SQL PostgreSQL 16, Cloud Storage bucket, Artifact Registry, Secret Manager, Cloud Tasks, Cloud Scheduler, Vertex AI (`GOOGLE_GENAI_USE_VERTEXAI=true`), GitHub WIF provider/SA, Stripe keys/prices, SMTP credentials, and optional Firebase `google-services.json`.
+   - Google Play Console upload keystore (`ANDROID_KEYSTORE_*`) and canonical HTTPS production domain (`PROD_API_BASE_URL`) for signed `release` (`prod`) AAB and live production API authentication.
+2. **Physical Device Hardware QA (`NOT TESTED`):**
+   - Interactive hardware/AVD verification across Android 13, 14, 15, and 16 (zero physical `adb` devices or AVD system images installed in this environment). See [docs/14-android-device-testing-checklist.md](docs/14-android-device-testing-checklist.md).
+3. **Database Migrations Preserved:**
+   - `contracts/schema.sql` and `services/api/app/db/initial_schema.sql` remain byte-identical; additive schema changes live cleanly in `0002_commercial_saas_hardening.py` and reversible `0003_media_reservations.py`.

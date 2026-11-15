@@ -85,6 +85,8 @@ def _resolve_document_upload_status(
     project_id: UUID,
     uri: str | None,
     settings: Settings,
+    actor_user_id: UUID,
+    member_role: str,
 ) -> str:
     if not uri:
         return "NONE"
@@ -101,6 +103,22 @@ def _resolve_document_upload_status(
             code="VALIDATION",
             title="Validation Error",
             detail=err or "Invalid permit document storage URI",
+        )
+    matching_ticket = db.scalar(
+        select(UploadTicket).where(UploadTicket.storage_uri == uri)
+    )
+    if matching_ticket is not None and (
+        matching_ticket.project_id != project_id
+        or (
+            matching_ticket.user_id != actor_user_id
+            and member_role not in PROJECT_ELEVATED_RECORD_ROLES
+        )
+    ):
+        raise ProblemException(
+            status_code=403,
+            code="FORBIDDEN",
+            title="Forbidden",
+            detail="Cannot attach an upload ticket belonging to another user or project",
         )
     completed_ticket = db.scalar(
         select(UploadTicket).where(
@@ -151,7 +169,7 @@ def create_permit(
     storage: Annotated[MediaStorageService, Depends(get_storage)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> PermitResponse:
-    project, _ = require_active_project_member(
+    project, member = require_active_project_member(
         db, project_id, current_user, allowed_roles=PERMIT_WRITE_ROLES
     )
     doc_status = _resolve_document_upload_status(
@@ -159,6 +177,8 @@ def create_permit(
         project_id=project_id,
         uri=payload.document_photo_uri,
         settings=settings,
+        actor_user_id=current_user.id,
+        member_role=member.role,
     )
     permit = Permit(
         project_id=project_id,
@@ -250,6 +270,8 @@ def update_permit(
             project_id=permit.project_id,
             uri=payload.document_photo_uri,
             settings=settings,
+            actor_user_id=current_user.id,
+            member_role=member.role,
         )
 
     ip_addr, user_agent = extract_client_meta(request)

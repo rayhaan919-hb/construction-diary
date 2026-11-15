@@ -11,6 +11,24 @@ enum class MediaKind {
 }
 
 @Serializable
+data class MediaReservationRequestDto(
+    val kind: MediaKind,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("object_id") val objectId: String,
+    @SerialName("ttl_seconds") val ttlSeconds: Int? = null
+)
+
+@Serializable
+data class MediaReservationResponseDto(
+    @SerialName("reservation_id") val reservationId: String,
+    val kind: MediaKind,
+    @SerialName("project_id") val projectId: String,
+    @SerialName("object_id") val objectId: String,
+    val status: String,
+    @SerialName("expires_at") val expiresAt: String
+)
+
+@Serializable
 data class UploadUrlRequestDto(
     val kind: MediaKind,
     @SerialName("project_id") val projectId: String,

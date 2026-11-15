@@ -7,20 +7,26 @@
 
 ## Highlights in v1.0.0
 
-### Security & Authentication
+### Security, Media Reservations & Web Hardening
 - Migrated authentication to Argon2id hashing with transparent rehash upgrades, timing-safe dummy checks, progressive account lockout, per-IP rate limiting, password reset email/token flows, and refresh-token rotation + family reuse revocation.
-- Replaced deterministic user-supplied storage paths with single-use `UploadTicket` issuance bound to `(user, project, target_record)` + byte-size bounds + magic-byte signature validation + path traversal sanitization.
-- Enforced fail-closed startup configuration validation (`ENV=staging|production`) requiring 32+ char distinct secrets, TLS `CORS_ORIGINS`, GCS backend, non-default database credentials, and Google Secret Manager (`sm://`) support.
+- Implemented offline-compatible media upload reservations (`POST /v1/media/reservations`, Alembic `0003_media_reservations.py`) binding client-generated UUIDs to the authenticated user, project, and organization, alongside single-use `UploadTicket` verification, immutable object keys, magic-byte + MIME + size validation (`25 MB`), replay/overwrite protection, and auditable orphan media cleanup (`media_cleanup_runs`, `app.jobs.media_cleanup`).
+- Fixed `PATCH /v1/logs/{log_id}` human-edit tracking so editing field notes consistently sets `edited_by_human = true` across API responses, web timeline badges, and PDF exports (while honoring explicit overrides).
+- Upgraded `apps/web` to `next@^16.4.6` (`eslint-config-next@^16.4.6`) and migrated middleware to `src/proxy.ts`, eliminating high/critical production npm advisories (`npm audit --omit=dev --audit-level=high` clean).
+- Extracted dynamic request-scoped CSP generation (`apps/web/src/lib/csp.ts`, applied in `src/proxy.ts` + `next.config.ts`) to keep `https:`-only media directives in production while permitting explicit local loopback API origins (`127.0.0.1` / `localhost`) in local/E2E verification.
+- Built Web BFF CSRF origin verification, SSRF IP/DNS blocking for PDF photo downloads (`photo-fetcher.ts`), Organization Admin Console (`/organization`), team onboarding (`/register`, `/invite`, `/forgot-password`, `/reset-password`), and offline demo mode (`NEXT_PUBLIC_DEMO_MODE=true`).
 
-### Multi-Tenant SaaS & Web Portal
-- Added organization tenancy (`organizations`, `organization_members`, `organization_invitations`, `audit_logs`, `billing_events`) via Alembic migration `0002_commercial_saas_hardening.py` while keeping `initial_schema.sql` byte-identical to `contracts/schema.sql`.
-- Built Web BFF CSRF origin verification, strict CSP/HSTS/XFO security headers, SSRF-hardened photo downloads for bilingual PDF exports, Organization Admin Console (`/organization`), team onboarding (`/register`, `/invite`, `/forgot-password`, `/reset-password`), and offline demo mode (`NEXT_PUBLIC_DEMO_MODE=true`).
+### Offline-First Android (`targetSdk = 36`) & Release Signing
+- Upgraded Android `targetSdk` to `36` (`compileSdk = 37`, `minSdk = 26`) with static compatibility verification across Android 13–16 behaviors ([docs/14-android-device-testing-checklist.md](docs/14-android-device-testing-checklist.md)).
+- Removed placeholder `.example.com` production URLs and implemented strict fail-closed environment separation (`debug`/`dev`, `staging`, `release`/`prod`) plus fail-closed release signing (`GradleException` on missing HTTPS endpoint or keystore secrets) and automated `build-metadata.json` emission ([docs/15-android-release-signing.md](docs/15-android-release-signing.md)).
+- Updated Android `MediaUploader.kt` to reserve target UUIDs via `/v1/media/reservations` before requesting upload tickets, upgraded storage to Keystore `AES/GCM/NoPadding`, preserved `CONFLICT_PENDING` dirty edits, cleaned remote photo tombstones, added full English/Urdu (`values-ur/`)/Arabic (`values-ar/`) UI localization, and supported optional `google-services.json`.
 
-### Offline-First Android & AI Extraction
-- Upgraded Android session storage to Android Keystore `AES/GCM/NoPadding` encryption, ensured full credential + FCM cleanup on logout (`clearAllSettingsOnLogout`), enforced HTTPS for release `API_BASE_URL` builds, disabled release cleartext HTTP, and added full English, Urdu (`values-ur/`), and Arabic (`values-ar/`) UI localization.
-- Fixed offline conflict preservation (`CONFLICT_PENDING` keeps `syncDirty = true`), remote photo tombstone cleanup (DB + local disk), remote voice note playback, and graceful `google-services.json`-optional FCM initialization.
-- Upgraded AI extraction to durable DB queue state (`extraction_jobs`) with Cloud Tasks dispatch, stale lease recovery, Pydantic validation, and retry endpoints.
+### Infrastructure, Disaster Recovery & CI/CD
+- Verified destructive PostgreSQL 16 + local media backup/restore roundtrip (`infra/scripts/verify-backup-restore.sh`) including sorted SHA-256 parity across restored media files and live FastAPI authentication against the restored database.
+- Fixed CI workflow `.github/workflows/ci.yml` (`actions/setup-java@v5`, `android-actions/setup-android@v4`, `npm audit --omit=dev --audit-level=high`, dev dependency reporting, shell syntax checks, fail-closed `bundleRelease` check, and signed `staging` APK/AAB artifact verification) and fixed `pgserver` binary/URI handling in `test_postgres_backup_and_restore_roundtrip`.
+- Added live Chromium full-stack Playwright E2E coverage (`apps/web/e2e/commercial-readiness.spec.ts`) exercising signup, invitations, RBAC, projects, offline media reservations/sync, lightbox, note editing, permit CRUD, PDF export, and auth guards.
 
-### Infrastructure, Testing & Compliance
-- Added Cloud Run / Cloud SQL / GCS / Secret Manager setup, deployment, backup, and restore verification scripts (`infra/scripts/*.sh`) plus WIF CI/CD workflows (`.github/workflows/{ci,cd}.yml`).
-- Verified across Backend (`pytest` 32 passed, `ruff`, `mypy`), Web (`vitest` 39 passed, `tsc`, `eslint`, `next build`), and Android (`testDebugUnitTest` 34 passed, `lintDebug`, release builds).
+---
+
+## Pre-Production Requirements & Known Limitations
+- **External Cloud & Signing Secrets Required:** Live GCP rollout (`infra/scripts/deploy-gcp.sh`, Cloud Run, Cloud SQL, GCS, Secret Manager, Cloud Tasks, Vertex AI, Stripe, SMTP) and Play Console production `release` AAB signing (`PROD_API_BASE_URL` + `ANDROID_KEYSTORE_*`) require external credentials not stored in git.
+- **Physical Device Hardware QA:** Physical/emulator interactive testing across Android 13–16 must be completed before promoting a Play Store release ([docs/14-android-device-testing-checklist.md](docs/14-android-device-testing-checklist.md)).

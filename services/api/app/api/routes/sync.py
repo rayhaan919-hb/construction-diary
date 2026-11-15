@@ -21,6 +21,7 @@ from app.core.permissions import (
     Role,
 )
 from app.db.models import (
+    MediaReservation,
     Organization,
     Permit,
     PermitWithStatus,
@@ -154,17 +155,83 @@ def _resolve_active_member_for_push(
     return member
 
 
-def _has_uploaded_ticket(db: Session, project_id: UUID, storage_uri: str | None) -> bool:
+def _has_uploaded_ticket(
+    db: Session,
+    project_id: UUID,
+    object_id: UUID,
+    storage_uri: str | None,
+) -> bool:
     if not storage_uri:
         return False
     row = db.scalar(
         select(UploadTicket.id).where(
             UploadTicket.project_id == project_id,
+            UploadTicket.object_id == object_id,
             UploadTicket.storage_uri == storage_uri,
             UploadTicket.status.in_(("UPLOADED", "COMPLETED")),
         )
     )
     return row is not None
+
+
+def _verify_and_consume_media_binding(
+    db: Session,
+    *,
+    entity: Literal["permits", "site_logs", "site_log_photos"],
+    kind: Literal["PERMIT_DOC", "AUDIO", "PHOTO"],
+    object_id: UUID,
+    project_id: UUID,
+    storage_uri: str | None,
+    current_user: User,
+    member_role: str,
+) -> SyncPushResultItem | None:
+    """Enforce pending reservation ownership and prevent cross-record storage URI hijacking."""
+    now = datetime.now(UTC)
+    reservation = db.scalar(
+        select(MediaReservation)
+        .where(
+            MediaReservation.kind == kind,
+            MediaReservation.object_id == object_id,
+            MediaReservation.status == "ACTIVE",
+        )
+        .with_for_update()
+    )
+    if reservation is not None:
+        if reservation.expires_at <= now:
+            reservation.status = "EXPIRED"
+        elif reservation.project_id != project_id or reservation.user_id != current_user.id:
+            return SyncPushResultItem(
+                entity=entity,
+                id=object_id,
+                status="REJECTED",
+                error_code="FORBIDDEN",
+                error_detail="Target record identifier is reserved by another user or project",
+            )
+        else:
+            reservation.status = "CONSUMED"
+            reservation.consumed_at = now
+
+    if storage_uri:
+        ticket = db.scalar(
+            select(UploadTicket).where(UploadTicket.storage_uri == storage_uri)
+        )
+        if ticket is not None and (
+            ticket.project_id != project_id
+            or ticket.kind != kind
+            or ticket.object_id != object_id
+            or (
+                ticket.user_id != current_user.id
+                and member_role not in PROJECT_ELEVATED_RECORD_ROLES
+            )
+        ):
+            return SyncPushResultItem(
+                entity=entity,
+                id=object_id,
+                status="REJECTED",
+                error_code="FORBIDDEN",
+                error_detail="Storage URI belongs to another record, user, or project",
+            )
+    return None
 
 
 def _apply_permit_push(
@@ -220,13 +287,28 @@ def _apply_permit_push(
                 return member_or_err
             member = member_or_err
 
+            binding_err = _verify_and_consume_media_binding(
+                db,
+                entity="permits",
+                kind="PERMIT_DOC",
+                object_id=item.id,
+                project_id=item.project_id,
+                storage_uri=item.document_photo_uri,
+                current_user=current_user,
+                member_role=member.role,
+            )
+            if binding_err is not None:
+                return binding_err
+
             existing = db.get(Permit, item.id)
             doc_status = (
                 "NONE"
                 if item.document_photo_uri is None
                 else (
                     "UPLOADED"
-                    if _has_uploaded_ticket(db, item.project_id, item.document_photo_uri)
+                    if _has_uploaded_ticket(
+                        db, item.project_id, item.id, item.document_photo_uri
+                    )
                     else "PENDING"
                 )
             )
@@ -371,6 +453,19 @@ def _apply_site_log_push(
                 return member_or_err
             member = member_or_err
 
+            binding_err = _verify_and_consume_media_binding(
+                db,
+                entity="site_logs",
+                kind="AUDIO",
+                object_id=item.id,
+                project_id=item.project_id,
+                storage_uri=item.audio_uri,
+                current_user=current_user,
+                member_role=member.role,
+            )
+            if binding_err is not None:
+                return binding_err
+
             existing = db.get(SiteLog, item.id)
             if existing is not None:
                 if existing.project_id != item.project_id:
@@ -415,7 +510,7 @@ def _apply_site_log_push(
                 elif (
                     existing.audio_uri == item.audio_uri
                     and existing.audio_upload_status == "UPLOADED"
-                ) or _has_uploaded_ticket(db, item.project_id, item.audio_uri):
+                ) or _has_uploaded_ticket(db, item.project_id, item.id, item.audio_uri):
                     next_audio_status = "UPLOADED"
                 else:
                     next_audio_status = "PENDING"
@@ -447,7 +542,7 @@ def _apply_site_log_push(
                     if item.audio_uri is None
                     else (
                         "UPLOADED"
-                        if _has_uploaded_ticket(db, item.project_id, item.audio_uri)
+                        if _has_uploaded_ticket(db, item.project_id, item.id, item.audio_uri)
                         else "PENDING"
                     )
                 )
@@ -567,6 +662,19 @@ def _apply_photo_push(
                     error_detail="Insufficient permissions to modify photos on this site log",
                 )
 
+            binding_err = _verify_and_consume_media_binding(
+                db,
+                entity="site_log_photos",
+                kind="PHOTO",
+                object_id=item.id,
+                project_id=parent_log.project_id,
+                storage_uri=item.storage_uri,
+                current_user=current_user,
+                member_role=member.role,
+            )
+            if binding_err is not None:
+                return binding_err
+
             existing = db.get(SiteLogPhoto, item.id)
             if existing is not None:
                 if existing.site_log_id != item.site_log_id:
@@ -579,7 +687,9 @@ def _apply_photo_push(
                     )
                 if existing.storage_uri == item.storage_uri:
                     next_upload_status = existing.upload_status
-                elif _has_uploaded_ticket(db, parent_log.project_id, item.storage_uri):
+                elif _has_uploaded_ticket(
+                    db, parent_log.project_id, item.id, item.storage_uri
+                ):
                     next_upload_status = "UPLOADED"
                 else:
                     next_upload_status = "PENDING"
@@ -601,7 +711,9 @@ def _apply_photo_push(
             else:
                 init_status = (
                     "UPLOADED"
-                    if _has_uploaded_ticket(db, parent_log.project_id, item.storage_uri)
+                    if _has_uploaded_ticket(
+                        db, parent_log.project_id, item.id, item.storage_uri
+                    )
                     else "PENDING"
                 )
                 server_version = db.scalar(

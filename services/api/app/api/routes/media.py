@@ -15,7 +15,7 @@ from fastapi import (
     Response,
 )
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.deps import (
@@ -31,7 +31,9 @@ from app.core.permissions import (
     PERMIT_WRITE_ROLES,
     PROJECT_ELEVATED_RECORD_ROLES,
 )
+from app.core.rate_limit import rate_limiter
 from app.db.models import (
+    MediaReservation,
     Organization,
     Permit,
     SiteLog,
@@ -40,7 +42,13 @@ from app.db.models import (
     User,
 )
 from app.db.session import get_db
-from app.schemas.media import MediaCompleteRequest, UploadTicketResponse, UploadUrlRequest
+from app.schemas.media import (
+    MediaCompleteRequest,
+    MediaReservationRequest,
+    MediaReservationResponse,
+    UploadTicketResponse,
+    UploadUrlRequest,
+)
 from app.services.audit import record_audit_event
 from app.services.extraction_worker import enqueue_extraction_job, execute_extraction_job
 from app.services.media_security import (
@@ -50,7 +58,7 @@ from app.services.media_security import (
     sanitize_relative_object_key,
     validate_magic_bytes,
 )
-from app.services.saas import enforce_storage_quota
+from app.services.saas import enforce_storage_quota, ensure_org_active
 from app.services.storage import MediaStorageService
 
 router = APIRouter(prefix="/v1/media", tags=["media"])
@@ -60,7 +68,7 @@ def _can_access_record(member_role: str, owner_user_id: UUID, actor_user_id: UUI
     return member_role in PROJECT_ELEVATED_RECORD_ROLES or owner_user_id == actor_user_id
 
 
-def _verify_target_ownership_for_ticket(
+def _check_existing_record_for_media(
     db: Session,
     *,
     kind: str,
@@ -68,7 +76,8 @@ def _verify_target_ownership_for_ticket(
     object_id: UUID,
     member_role: str,
     actor_user_id: UUID,
-) -> None:
+) -> bool:
+    """Validate ownership if the target record already exists. Return True if found."""
     if kind == "AUDIO":
         log = db.get(SiteLog, object_id)
         if log is not None:
@@ -93,6 +102,7 @@ def _verify_target_ownership_for_ticket(
                     title="Conflict",
                     detail="Audio has already been uploaded for this log",
                 )
+            return True
     elif kind == "PHOTO":
         photo = db.get(SiteLogPhoto, object_id)
         if photo is not None:
@@ -123,6 +133,7 @@ def _verify_target_ownership_for_ticket(
                     title="Conflict",
                     detail="Site photo has already been uploaded cleanly",
                 )
+            return True
     elif kind == "PERMIT_DOC":
         permit = db.get(Permit, object_id)
         if permit is not None:
@@ -140,6 +151,80 @@ def _verify_target_ownership_for_ticket(
                     title="Forbidden",
                     detail="You do not have permission to replace this permit document",
                 )
+            return True
+    return False
+
+
+def _verify_target_ownership_for_ticket(
+    db: Session,
+    *,
+    kind: str,
+    project_id: UUID,
+    object_id: UUID,
+    member_role: str,
+    actor_user_id: UUID,
+) -> MediaReservation | None:
+    record_exists = _check_existing_record_for_media(
+        db,
+        kind=kind,
+        project_id=project_id,
+        object_id=object_id,
+        member_role=member_role,
+        actor_user_id=actor_user_id,
+    )
+
+    reservation: MediaReservation | None = None
+    if not record_exists:
+        now = datetime.now(UTC)
+        reservation = db.scalar(
+            select(MediaReservation)
+            .where(
+                MediaReservation.kind == kind,
+                MediaReservation.object_id == object_id,
+            )
+            .order_by(MediaReservation.created_at.desc())
+            .with_for_update()
+        )
+        if reservation is None:
+            raise ProblemException(
+                status_code=409,
+                code="RESERVATION_REQUIRED",
+                title="Reservation Required",
+                detail=(
+                    "Target record does not exist; register a pending media reservation "
+                    "or sync the record before requesting an upload URL"
+                ),
+            )
+        if reservation.project_id != project_id or reservation.user_id != actor_user_id:
+            raise ProblemException(
+                status_code=403,
+                code="FORBIDDEN",
+                title="Forbidden",
+                detail="Target media reservation belongs to another user or project",
+            )
+        if reservation.status == "ACTIVE" and reservation.expires_at <= now:
+            reservation.status = "EXPIRED"
+            db.commit()
+            raise ProblemException(
+                status_code=403,
+                code="RESERVATION_EXPIRED",
+                title="Reservation Expired",
+                detail="Media reservation has expired; register a new reservation",
+            )
+        if reservation.status == "EXPIRED":
+            raise ProblemException(
+                status_code=403,
+                code="RESERVATION_EXPIRED",
+                title="Reservation Expired",
+                detail="Media reservation has expired; register a new reservation",
+            )
+        if reservation.status != "ACTIVE":
+            raise ProblemException(
+                status_code=409,
+                code="RESERVATION_REQUIRED",
+                title="Reservation Required",
+                detail="No active media reservation exists for this target object",
+            )
 
     # Also block another user from issuing a ticket for an object_id already claimed by someone else
     other_ticket = db.scalar(
@@ -150,13 +235,142 @@ def _verify_target_ownership_for_ticket(
             UploadTicket.status.in_(("ISSUED", "UPLOADED", "COMPLETED")),
         )
     )
-    if other_ticket is not None and member_role not in PROJECT_ELEVATED_RECORD_ROLES:
+    if other_ticket is not None and (
+        not record_exists or member_role not in PROJECT_ELEVATED_RECORD_ROLES
+    ):
         raise ProblemException(
             status_code=403,
             code="FORBIDDEN",
             title="Forbidden",
             detail="Target media object is bound to another user",
         )
+    return reservation
+
+
+@router.post(
+    "/reservations",
+    response_model=MediaReservationResponse,
+    status_code=201,
+)
+def create_media_reservation(
+    payload: MediaReservationRequest,
+    request: Request,
+    current_user: Annotated[User, Depends(get_verified_user)],
+    db: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> MediaReservationResponse:
+    """Reserve an offline-generated target object_id bound to user, project, and org."""
+    limit_decision = rate_limiter.check(
+        f"media-reserve:user:{current_user.id}",
+        settings.RATE_LIMIT_MEDIA_UPLOADS_PER_MINUTE,
+        60,
+    )
+    if not limit_decision.allowed:
+        raise ProblemException(
+            status_code=429,
+            code="RATE_LIMITED",
+            title="Too Many Requests",
+            detail="Too many media reservation requests; try again shortly.",
+            headers={"Retry-After": str(limit_decision.retry_after_seconds)},
+        )
+
+    ip_addr, user_agent = extract_client_meta(request)
+    allowed_roles = (
+        PERMIT_WRITE_ROLES if payload.kind == "PERMIT_DOC" else LOG_WRITE_ROLES
+    )
+    project, member = require_active_project_member(
+        db,
+        payload.project_id,
+        current_user,
+        allowed_roles=allowed_roles,
+    )
+
+    _check_existing_record_for_media(
+        db,
+        kind=payload.kind,
+        project_id=project.id,
+        object_id=payload.object_id,
+        member_role=member.role,
+        actor_user_id=current_user.id,
+    )
+
+    now = datetime.now(UTC)
+    ttl_seconds = payload.ttl_seconds or settings.MEDIA_RESERVATION_TTL_SECONDS
+    desired_expires_at = now + timedelta(seconds=ttl_seconds)
+
+    existing_active = db.scalar(
+        select(MediaReservation)
+        .where(
+            MediaReservation.kind == payload.kind,
+            MediaReservation.object_id == payload.object_id,
+            MediaReservation.status == "ACTIVE",
+        )
+        .with_for_update()
+    )
+    if existing_active is not None:
+        if existing_active.expires_at <= now:
+            existing_active.status = "EXPIRED"
+            db.flush()
+        elif (
+            existing_active.user_id != current_user.id
+            or existing_active.project_id != project.id
+        ):
+            raise ProblemException(
+                status_code=403,
+                code="FORBIDDEN",
+                title="Forbidden",
+                detail="Target object identifier is already reserved by another user or project",
+            )
+        else:
+            existing_active.expires_at = max(existing_active.expires_at, desired_expires_at)
+            db.commit()
+            db.refresh(existing_active)
+            return MediaReservationResponse(
+                reservation_id=existing_active.id,
+                kind=payload.kind,
+                project_id=existing_active.project_id,
+                object_id=existing_active.object_id,
+                status="ACTIVE",
+                expires_at=existing_active.expires_at,
+            )
+
+    reservation = MediaReservation(
+        organization_id=project.organization_id,
+        project_id=project.id,
+        user_id=current_user.id,
+        kind=payload.kind,
+        object_id=payload.object_id,
+        status="ACTIVE",
+        expires_at=desired_expires_at,
+    )
+    db.add(reservation)
+    db.flush()
+
+    record_audit_event(
+        db,
+        action="media.reservation_created",
+        resource_type="media_reservation",
+        resource_id=reservation.id,
+        actor_user=current_user,
+        organization_id=project.organization_id,
+        ip_address=ip_addr,
+        user_agent=user_agent,
+        details={
+            "kind": payload.kind,
+            "project_id": str(project.id),
+            "object_id": str(payload.object_id),
+        },
+    )
+    db.commit()
+    db.refresh(reservation)
+    return MediaReservationResponse(
+        reservation_id=reservation.id,
+        kind=payload.kind,
+        project_id=reservation.project_id,
+        object_id=reservation.object_id,
+        status="ACTIVE",
+        expires_at=reservation.expires_at,
+    )
 
 
 @router.post("/upload-url", response_model=UploadTicketResponse)
@@ -168,6 +382,20 @@ def create_upload_url(
     storage: Annotated[MediaStorageService, Depends(get_storage)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> UploadTicketResponse:
+    limit_decision = rate_limiter.check(
+        f"media-upload-url:user:{current_user.id}",
+        settings.RATE_LIMIT_MEDIA_UPLOADS_PER_MINUTE,
+        60,
+    )
+    if not limit_decision.allowed:
+        raise ProblemException(
+            status_code=429,
+            code="RATE_LIMITED",
+            title="Too Many Requests",
+            detail="Upload ticket rate limit exceeded; try again shortly.",
+            headers={"Retry-After": str(limit_decision.retry_after_seconds)},
+        )
+
     ip_addr, user_agent = extract_client_meta(request)
 
     if resolve_extension_for_kind(payload.kind, payload.content_type) is None:
@@ -188,12 +416,7 @@ def create_upload_url(
         allowed_roles=allowed_roles,
     )
 
-    if project.organization_id is not None:
-        org = db.get(Organization, project.organization_id)
-        if org is not None:
-            enforce_storage_quota(org, payload.byte_size)
-
-    _verify_target_ownership_for_ticket(
+    reservation = _verify_target_ownership_for_ticket(
         db,
         kind=payload.kind,
         project_id=project.id,
@@ -202,20 +425,45 @@ def create_upload_url(
         actor_user_id=current_user.id,
     )
 
-    # Expire prior un-uploaded ISSUED tickets for this user/object before issuing a new key
+    now = datetime.now(UTC)
+
+    # Revoke prior un-uploaded ISSUED tickets for this user/object before quota check & re-issue
     prior_tickets = list(
         db.scalars(
-            select(UploadTicket).where(
+            select(UploadTicket)
+            .where(
                 UploadTicket.project_id == project.id,
                 UploadTicket.kind == payload.kind,
                 UploadTicket.object_id == payload.object_id,
                 UploadTicket.user_id == current_user.id,
                 UploadTicket.status == "ISSUED",
             )
+            .with_for_update()
         )
     )
     for old_t in prior_tickets:
         old_t.status = "REVOKED"
+    db.flush()
+
+    if project.organization_id is not None:
+        org = db.scalar(
+            select(Organization)
+            .where(Organization.id == project.organization_id)
+            .with_for_update()
+        )
+        if org is not None:
+            ensure_org_active(org)
+            in_flight_bytes = int(
+                db.scalar(
+                    select(func.coalesce(func.sum(UploadTicket.expected_byte_size), 0)).where(
+                        UploadTicket.organization_id == org.id,
+                        UploadTicket.status.in_(("ISSUED", "UPLOADED")),
+                        UploadTicket.expires_at > now,
+                    )
+                )
+                or 0
+            )
+            enforce_storage_quota(org, in_flight_bytes + payload.byte_size)
 
     ticket_id = uuid4()
     ticket = storage.create_upload_ticket(
@@ -226,7 +474,7 @@ def create_upload_url(
         ticket_id=ticket_id,
         expected_byte_size=payload.byte_size,
     )
-    expires_at = datetime.now(UTC) + timedelta(seconds=settings.SIGNED_URL_TTL_SECONDS)
+    expires_at = now + timedelta(seconds=settings.SIGNED_URL_TTL_SECONDS)
 
     db.add(
         UploadTicket(
@@ -240,6 +488,7 @@ def create_upload_url(
             storage_uri=ticket.storage_uri,
             content_type=payload.content_type,
             expected_byte_size=payload.byte_size,
+            reservation_id=reservation.id if reservation is not None else None,
             status="ISSUED",
             expires_at=expires_at,
         )
@@ -401,6 +650,39 @@ def _validate_and_consume_ticket(
     return ticket
 
 
+def _finalize_upload_org_and_reservation(
+    db: Session,
+    *,
+    organization_id: UUID | None,
+    kind: str,
+    object_id: UUID,
+    actual_byte_size: int | None,
+) -> None:
+    """Update organization storage usage and consume any pending reservation."""
+    if organization_id is not None:
+        org = db.scalar(
+            select(Organization)
+            .where(Organization.id == organization_id)
+            .with_for_update()
+        )
+        if org is not None:
+            org.storage_bytes_used = int(org.storage_bytes_used or 0) + (
+                actual_byte_size or 0
+            )
+    active_res = db.scalar(
+        select(MediaReservation)
+        .where(
+            MediaReservation.kind == kind,
+            MediaReservation.object_id == object_id,
+            MediaReservation.status == "ACTIVE",
+        )
+        .with_for_update()
+    )
+    if active_res is not None:
+        active_res.status = "CONSUMED"
+        active_res.consumed_at = datetime.now(UTC)
+
+
 @router.post("/complete", status_code=204)
 def complete_media_upload(
     payload: MediaCompleteRequest,
@@ -461,12 +743,13 @@ def complete_media_upload(
         log.audio_upload_status = "UPLOADED"
         log.extraction_status = "PENDING"
         log.extraction_error = None
-        if project.organization_id is not None:
-            org = db.get(Organization, project.organization_id)
-            if org is not None:
-                org.storage_bytes_used = int(org.storage_bytes_used or 0) + (
-                    consumed.actual_byte_size or 0
-                )
+        _finalize_upload_org_and_reservation(
+            db,
+            organization_id=project.organization_id,
+            kind="AUDIO",
+            object_id=log.id,
+            actual_byte_size=consumed.actual_byte_size,
+        )
 
         job, should_run_local = enqueue_extraction_job(
             db,
@@ -547,12 +830,13 @@ def complete_media_upload(
         photo.storage_uri = consumed.storage_uri
         photo.upload_status = "UPLOADED"
         photo.byte_size = consumed.actual_byte_size
-        if project.organization_id is not None:
-            org = db.get(Organization, project.organization_id)
-            if org is not None:
-                org.storage_bytes_used = int(org.storage_bytes_used or 0) + (
-                    consumed.actual_byte_size or 0
-                )
+        _finalize_upload_org_and_reservation(
+            db,
+            organization_id=project.organization_id,
+            kind="PHOTO",
+            object_id=photo.id,
+            actual_byte_size=consumed.actual_byte_size,
+        )
 
         job, should_run_local = enqueue_extraction_job(
             db,
@@ -624,12 +908,13 @@ def complete_media_upload(
     )
     permit.document_photo_uri = consumed.storage_uri
     permit.document_upload_status = "UPLOADED"
-    if project.organization_id is not None:
-        org = db.get(Organization, project.organization_id)
-        if org is not None:
-            org.storage_bytes_used = int(org.storage_bytes_used or 0) + (
-                consumed.actual_byte_size or 0
-            )
+    _finalize_upload_org_and_reservation(
+        db,
+        organization_id=project.organization_id,
+        kind="PERMIT_DOC",
+        object_id=permit.id,
+        actual_byte_size=consumed.actual_byte_size,
+    )
 
     job, should_run_local = enqueue_extraction_job(
         db,

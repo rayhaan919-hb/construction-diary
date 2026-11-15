@@ -6,6 +6,7 @@ import {
   getEdgeJwtSecret,
   isDemoMode,
 } from "@/lib/config";
+import { buildContentSecurityPolicy } from "@/lib/csp";
 import {
   isJwtExpiredOrExpiring,
   verifyJwtHs256Signature,
@@ -24,6 +25,18 @@ const PUBLIC_PATHS = new Set([
   "/reset-password",
   "/invite",
 ]);
+
+function withCspHeader(res: NextResponse): NextResponse {
+  res.headers.set(
+    "Content-Security-Policy",
+    buildContentSecurityPolicy([
+      process.env.API_BASE_URL,
+      process.env.PUBLIC_API_BASE_URL,
+      process.env.INTERNAL_API_BASE_URL,
+    ])
+  );
+  return res;
+}
 
 function applyNextWithUpdatedCookies(
   req: NextRequest,
@@ -46,7 +59,11 @@ function applyNextWithUpdatedCookies(
   return res;
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
+  return withCspHeader(await handleProxy(req));
+}
+
+async function handleProxy(req: NextRequest): Promise<NextResponse> {
   if (isDemoMode()) {
     return NextResponse.next();
   }

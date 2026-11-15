@@ -38,6 +38,14 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
     )
     assert_problem_json(bad_ticket, 422, "VALIDATION")
 
+    # Reserve offline log_id before getting audio upload ticket
+    reserve_audio = client.post(
+        "/v1/media/reservations",
+        headers=supervisor_headers,
+        json={"kind": "AUDIO", "project_id": pid, "object_id": str(log_id)},
+    )
+    assert reserve_audio.status_code == 201
+
     # Get audio upload ticket
     valid_m4a = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00fake-audio"
     audio_ticket_resp = client.post(
@@ -277,10 +285,22 @@ def test_media_upload_complete_extraction_and_edited_by_human_guard(
     )
     assert_problem_json(no_audio_extract, 409, "AUDIO_NOT_UPLOADED")
 
-    # PERMIT_DOC upload-url -> local PUT -> complete -> permit returns signed document_photo_url
+    # PERMIT_DOC reserve -> upload-url -> PUT -> complete -> signed document_photo_url
     permit_obj_id = uuid.uuid4()
     valid_permit_jpg = (
         b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00permit-1\xff\xd9"
+    )
+    assert (
+        client.post(
+            "/v1/media/reservations",
+            headers=owner_headers,
+            json={
+                "kind": "PERMIT_DOC",
+                "project_id": pid,
+                "object_id": str(permit_obj_id),
+            },
+        ).status_code
+        == 201
     )
     pdoc_ticket = client.post(
         "/v1/media/upload-url",

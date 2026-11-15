@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { AlertCircle, Upload } from "lucide-react";
 import type { Permit, PermitInput, PermitPatch, UploadTicket } from "@/lib/types";
 import { bffFetch } from "@/lib/bff-client";
@@ -29,33 +29,24 @@ export function PermitModal({
   onClose,
   onSaved,
 }: PermitModalProps) {
-  const [permitName, setPermitName] = useState("");
-  const [authority, setAuthority] = useState("");
-  const [permitNumber, setPermitNumber] = useState("");
-  const [issueDate, setIssueDate] = useState("");
-  const [expiryDate, setExpiryDate] = useState("");
+  const [permitName, setPermitName] = useState(
+    () => editingPermit?.permit_name ?? ""
+  );
+  const [authority, setAuthority] = useState(
+    () => editingPermit?.authority ?? ""
+  );
+  const [permitNumber, setPermitNumber] = useState(
+    () => editingPermit?.permit_number ?? ""
+  );
+  const [issueDate, setIssueDate] = useState(
+    () => editingPermit?.issue_date ?? ""
+  );
+  const [expiryDate, setExpiryDate] = useState(
+    () => editingPermit?.expiry_date ?? ""
+  );
   const [docFile, setDocFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setError(null);
-    setDocFile(null);
-    if (editingPermit) {
-      setPermitName(editingPermit.permit_name);
-      setAuthority(editingPermit.authority);
-      setPermitNumber(editingPermit.permit_number ?? "");
-      setIssueDate(editingPermit.issue_date ?? "");
-      setExpiryDate(editingPermit.expiry_date);
-    } else {
-      setPermitName("");
-      setAuthority("");
-      setPermitNumber("");
-      setIssueDate("");
-      setExpiryDate("");
-    }
-  }, [open, editingPermit]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

@@ -20,6 +20,8 @@ services/api/.storage/
 node_modules/
 apps/web/.next/
 apps/web/out/
+apps/web/test-results/
+apps/web/playwright-report/
 *.tsbuildinfo
 
 # Android / Gradle
@@ -30,3 +32,4 @@ apps/mobile/app/build/
 .idea/
 *.keystore
 *.jks
+*.p12

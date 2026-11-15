@@ -1,3 +1,5 @@
+import java.net.URI
+import java.time.Instant
 import java.util.Properties
 
 plugins {
@@ -19,31 +21,116 @@ val localProps = Properties().apply {
     }
 }
 
-val debugApiBaseUrl: String = (
-    localProps.getProperty("api.baseUrl")
-        ?: System.getenv("API_BASE_URL")
-        ?: "http://10.0.2.2:8000"
-    ).trimEnd('/')
-
-val releaseApiBaseUrl: String = (
-    localProps.getProperty("api.releaseBaseUrl")
-        ?: System.getenv("RELEASE_API_BASE_URL")
-        ?: System.getenv("API_BASE_URL")
-        ?: ""
-    ).trimEnd('/')
-
-val isReleaseBuildRequested = gradle.startParameter.taskNames.any {
-    it.contains("Release", ignoreCase = true)
+fun propOrEnv(envKey: String, propKey: String, localKey: String? = null): String {
+    val fromProp = project.findProperty(propKey)?.toString()?.trim()
+    if (!fromProp.isNullOrEmpty()) return fromProp
+    val fromEnv = System.getenv(envKey)?.trim()
+    if (!fromEnv.isNullOrEmpty()) return fromEnv
+    if (localKey != null) {
+        val fromLocal = localProps.getProperty(localKey)?.trim()
+        if (!fromLocal.isNullOrEmpty()) return fromLocal
+    }
+    return ""
 }
-if (isReleaseBuildRequested) {
-    val lower = releaseApiBaseUrl.lowercase()
-    if (!lower.startsWith("https://") ||
-        lower.contains("localhost") ||
-        lower.contains("127.0.0.1") ||
-        lower.contains("10.0.2.2")
+
+fun requireValidHttpsEndpoint(url: String, envLabel: String, docHint: String) {
+    val normalized = url.trim().trimEnd('/')
+    if (normalized.isEmpty()) {
+        throw GradleException(
+            "$envLabel builds require an explicit HTTPS API endpoint ($docHint). " +
+                "Refusing to fall back to development or placeholder URLs."
+        )
+    }
+    val parsed = try {
+        URI(normalized)
+    } catch (e: Exception) {
+        throw GradleException("$envLabel API URL is invalid: '$normalized'", e)
+    }
+    val host = parsed.host?.lowercase() ?: ""
+    val isForbiddenHost =
+        parsed.scheme?.lowercase() != "https" ||
+            host.isEmpty() ||
+            host == "localhost" ||
+            host == "127.0.0.1" ||
+            host == "10.0.2.2" ||
+            host == "0.0.0.0" ||
+            host == "::1" ||
+            host == "example.com" ||
+            host.endsWith(".example.com") ||
+            host.endsWith(".example.org") ||
+            host.endsWith(".example.net")
+    if (isForbiddenHost) {
+        throw GradleException(
+            "$envLabel builds require a non-local HTTPS API endpoint (no http://, localhost, " +
+                "emulator loopback, or .example.* placeholder). Got '$normalized'."
+        )
+    }
+}
+
+val debugApiBaseUrl: String = (
+    propOrEnv("DEV_API_BASE_URL", "DEV_API_BASE_URL", "api.devBaseUrl")
+        .ifEmpty { propOrEnv("API_BASE_URL", "API_BASE_URL", "api.baseUrl") }
+        .ifEmpty { "http://10.0.2.2:8000" }
+    ).trimEnd('/')
+
+val stagingApiBaseUrl: String = propOrEnv(
+    "STAGING_API_BASE_URL",
+    "STAGING_API_BASE_URL",
+    "api.stagingBaseUrl"
+).trimEnd('/')
+
+val prodApiBaseUrl: String = (
+    propOrEnv("PROD_API_BASE_URL", "PROD_API_BASE_URL", "api.prodBaseUrl")
+        .ifEmpty { propOrEnv("RELEASE_API_BASE_URL", "RELEASE_API_BASE_URL", "api.releaseBaseUrl") }
+    ).trimEnd('/')
+
+val appVersionCode: Int = propOrEnv("VERSION_CODE", "VERSION_CODE").toIntOrNull() ?: 1
+val appVersionName: String = propOrEnv("VERSION_NAME", "VERSION_NAME").ifEmpty { "1.0.0" }
+
+val keystorePath = propOrEnv("ANDROID_KEYSTORE_PATH", "RELEASE_STORE_FILE")
+val keystorePassword = propOrEnv("ANDROID_KEYSTORE_PASSWORD", "RELEASE_STORE_PASSWORD")
+val keystoreAlias = propOrEnv("ANDROID_KEY_ALIAS", "RELEASE_KEY_ALIAS")
+val keystoreKeyPassword = propOrEnv("ANDROID_KEY_PASSWORD", "RELEASE_KEY_PASSWORD")
+
+val requestedTasks = gradle.startParameter.taskNames
+val isStagingTaskRequested = requestedTasks.any {
+    it.substringAfterLast(':').contains("Staging", ignoreCase = true)
+}
+val isReleaseTaskRequested = requestedTasks.any { task ->
+    val taskName = task.substringAfterLast(':')
+    (taskName != "generateReleaseMetadata" && taskName.contains("Release", ignoreCase = true)) ||
+        taskName.equals("assemble", ignoreCase = true) ||
+        taskName.equals("bundle", ignoreCase = true)
+}
+
+if (isStagingTaskRequested) {
+    requireValidHttpsEndpoint(
+        stagingApiBaseUrl,
+        "Staging",
+        "STAGING_API_BASE_URL / -PSTAGING_API_BASE_URL / local.properties api.stagingBaseUrl"
+    )
+}
+if (isReleaseTaskRequested) {
+    requireValidHttpsEndpoint(
+        prodApiBaseUrl,
+        "Production Release",
+        "PROD_API_BASE_URL / -PPROD_API_BASE_URL (or RELEASE_API_BASE_URL) in secure release configuration"
+    )
+}
+
+if (isStagingTaskRequested || isReleaseTaskRequested) {
+    val label = if (isReleaseTaskRequested) "Production release" else "Staging release"
+    if (keystorePath.isEmpty() ||
+        !file(keystorePath).exists() ||
+        keystorePassword.isEmpty() ||
+        keystoreAlias.isEmpty() ||
+        keystoreKeyPassword.isEmpty()
     ) {
         throw GradleException(
-            "Release builds require an external HTTPS API_BASE_URL or RELEASE_API_BASE_URL (got '$releaseApiBaseUrl')."
+            "$label builds require ANDROID_KEYSTORE_PATH (existing file), ANDROID_KEYSTORE_PASSWORD, " +
+                "ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD (or -PRELEASE_STORE_FILE / " +
+                "-PRELEASE_STORE_PASSWORD / -PRELEASE_KEY_ALIAS / -PRELEASE_KEY_PASSWORD). " +
+                "Refusing to emit an unsigned or falsely labelled release artifact."
         )
     }
 }
@@ -55,29 +142,22 @@ android {
     defaultConfig {
         applicationId = "com.sitediary.mobile"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        targetSdk = 36
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "API_BASE_URL", "\"$debugApiBaseUrl\"")
+        buildConfigField("String", "API_ENV", "\"dev\"")
     }
 
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
-                ?: project.findProperty("RELEASE_STORE_FILE")?.toString()
-            if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
+            if (keystorePath.isNotEmpty() && file(keystorePath).exists()) {
                 storeFile = file(keystorePath)
-                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-                    ?: project.findProperty("RELEASE_STORE_PASSWORD")?.toString()
-                    ?: ""
-                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
-                    ?: project.findProperty("RELEASE_KEY_ALIAS")?.toString()
-                    ?: ""
-                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
-                    ?: project.findProperty("RELEASE_KEY_PASSWORD")?.toString()
-                    ?: ""
+                storePassword = keystorePassword
+                keyAlias = keystoreAlias
+                keyPassword = keystoreKeyPassword
             }
         }
     }
@@ -85,15 +165,28 @@ android {
     buildTypes {
         debug {
             buildConfigField("String", "API_BASE_URL", "\"$debugApiBaseUrl\"")
+            buildConfigField("String", "API_ENV", "\"dev\"")
         }
-        release {
-            buildConfigField("String", "API_BASE_URL", "\"$releaseApiBaseUrl\"")
+        create("staging") {
+            matchingFallbacks += listOf("release")
+            applicationIdSuffix = ".staging"
+            versionNameSuffix = "-staging"
+            buildConfigField("String", "API_BASE_URL", "\"$stagingApiBaseUrl\"")
+            buildConfigField("String", "API_ENV", "\"staging\"")
             isMinifyEnabled = true
             isShrinkResources = true
-            val releaseSigning = signingConfigs.getByName("release")
-            if (releaseSigning.storeFile != null) {
-                signingConfig = releaseSigning
-            }
+            signingConfig = signingConfigs.getByName("release")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        release {
+            buildConfigField("String", "API_BASE_URL", "\"$prodApiBaseUrl\"")
+            buildConfigField("String", "API_ENV", "\"prod\"")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -185,4 +278,43 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.androidx.room.testing)
     testImplementation(libs.androidx.work.testing)
+}
+
+tasks.register("generateReleaseMetadata") {
+    group = "verification"
+    description = "Emits build metadata and version manifest for staging/release verification."
+    doLast {
+        val requestedEnv = if (isReleaseTaskRequested) "prod" else if (isStagingTaskRequested) "staging" else "dev"
+        val variantDir = if (requestedEnv == "prod") "release" else if (requestedEnv == "staging") "staging" else "debug"
+        val apiEndpoint = when (requestedEnv) {
+            "prod" -> prodApiBaseUrl
+            "staging" -> stagingApiBaseUrl
+            else -> debugApiBaseUrl
+        }
+        val apiHost = runCatching { URI(apiEndpoint).host ?: "" }.getOrDefault("")
+        val gitSha = System.getenv("GITHUB_SHA")?.takeIf { it.isNotBlank() } ?: "local-working-tree"
+        val outDir = layout.buildDirectory.dir("outputs/release-metadata/$variantDir").get().asFile
+        outDir.mkdirs()
+        val metadataFile = File(outDir, "build-metadata.json")
+        metadataFile.writeText(
+            """
+            {
+              "applicationId": "com.sitediary.mobile${if (requestedEnv == "staging") ".staging" else ""}",
+              "buildType": "$variantDir",
+              "apiEnvironment": "$requestedEnv",
+              "apiHost": "$apiHost",
+              "compileSdk": 37,
+              "targetSdk": 36,
+              "minSdk": 26,
+              "versionCode": $appVersionCode,
+              "versionName": "$appVersionName${if (requestedEnv == "staging") "-staging" else ""}",
+              "signedWithExternalKeystore": ${keystorePath.isNotEmpty()},
+              "productionReady": ${requestedEnv == "prod" && keystorePath.isNotEmpty() && prodApiBaseUrl.isNotEmpty()},
+              "gitSha": "$gitSha",
+              "generatedAtUtc": "${Instant.now()}"
+            }
+            """.trimIndent() + "\n"
+        )
+        println("Wrote Android release metadata to ${metadataFile.absolutePath}")
+    }
 }
