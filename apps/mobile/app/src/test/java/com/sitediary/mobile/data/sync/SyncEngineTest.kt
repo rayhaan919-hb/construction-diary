@@ -15,6 +15,7 @@ import com.sitediary.mobile.data.remote.dto.MemberDto
 import com.sitediary.mobile.data.remote.dto.PermitDto
 import com.sitediary.mobile.data.remote.dto.ProjectDto
 import com.sitediary.mobile.data.remote.dto.SiteLogDto
+import com.sitediary.mobile.data.remote.dto.SiteLogPhotoDto
 import com.sitediary.mobile.data.remote.dto.SyncPullChangesDto
 import com.sitediary.mobile.data.remote.dto.SyncPullResponseDto
 import com.sitediary.mobile.data.remote.dto.SyncPushRequestDto
@@ -433,6 +434,184 @@ class SyncEngineTest {
             val saved = logDao.getById("log-1")!!
             assertEquals("UPLOADED", saved.audioUploadStatus)
             assertEquals(clock.millis(), saved.audioUploadedAtEpochMs)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `push CONFLICT leaves local dirty edit intact with CONFLICT_PENDING error`() = runTest {
+        logDao.upsert(
+            SiteLogEntity(
+                id = "log-conflict",
+                projectId = "proj-1",
+                authorId = currentUserId,
+                logDate = "2026-11-14",
+                recordedAt = "2026-11-14T08:00:00Z",
+                notes = "Supervisor local note",
+                clientUpdatedAt = "2026-11-14T09:00:00Z",
+                createdAt = "2026-11-14T08:00:00Z",
+                updatedAt = "2026-11-14T09:00:00Z",
+                syncDirty = true,
+                localMutationSeq = 1L
+            )
+        )
+
+        coEvery { api.syncPush(any()) } returns Response.success(
+            SyncPushResponseDto(
+                serverTime = "2026-11-14T12:00:00Z",
+                results = listOf(
+                    SyncPushResultDto(
+                        entity = "site_logs",
+                        id = "log-conflict",
+                        status = "CONFLICT",
+                        errorDetail = "Server version is newer"
+                    )
+                )
+            )
+        )
+        coEvery { api.syncPull(since = any(), limit = any(), projectId = null) } returns Response.success(
+            SyncPullResponseDto(
+                nextCursor = 15L,
+                hasMore = false,
+                changes = SyncPullChangesDto(
+                    siteLogs = listOf(
+                        SiteLogDto(
+                            id = "log-conflict",
+                            projectId = "proj-1",
+                            authorId = currentUserId,
+                            logDate = "2026-11-14",
+                            recordedAt = "2026-11-14T08:00:00Z",
+                            notes = "Owner server edit",
+                            audioUploadStatus = "NONE",
+                            extractionStatus = "DONE",
+                            clientUpdatedAt = "2026-11-14T10:00:00Z",
+                            createdAt = "2026-11-14T08:00:00Z",
+                            updatedAt = "2026-11-14T10:00:00Z",
+                            serverVersion = 15L
+                        )
+                    )
+                )
+            )
+        )
+
+        val outcome = syncEngine.syncAll()
+        assertEquals(SyncOutcome.Success, outcome)
+
+        val retained = logDao.getById("log-conflict")!!
+        assertEquals("Supervisor local note", retained.notes)
+        assertEquals(true, retained.syncDirty)
+        assertTrue(retained.syncError?.contains("CONFLICT_PENDING") == true)
+    }
+
+    @Test
+    fun `pull tombstone removes local photo file from device`() = runTest {
+        val photoFile = mediaFileManager.createPhotoFile("proj-1", "photo-del").apply {
+            writeText("jpg-bytes")
+        }
+        photoDao.upsertAll(
+            listOf(
+                SiteLogPhotoEntity(
+                    id = "photo-del",
+                    siteLogId = "log-1",
+                    projectId = "proj-1",
+                    createdAt = "2026-11-14T08:00:00Z",
+                    updatedAt = "2026-11-14T08:00:00Z",
+                    localPath = photoFile.absolutePath,
+                    uploadStatus = "UPLOADED"
+                )
+            )
+        )
+
+        coEvery { api.syncPull(since = 0L, limit = any(), projectId = null) } returns Response.success(
+            SyncPullResponseDto(
+                nextCursor = 25L,
+                hasMore = false,
+                changes = SyncPullChangesDto(
+                    siteLogPhotos = listOf(
+                        SiteLogPhotoDto(
+                            id = "photo-del",
+                            siteLogId = "log-1",
+                            storageUri = "local://projects/proj-1/photos/photo-del.jpg",
+                            uploadStatus = "UPLOADED",
+                            deletedAt = "2026-11-14T11:00:00Z",
+                            serverVersion = 25L
+                        )
+                    )
+                )
+            )
+        )
+
+        val outcome = syncEngine.syncAll()
+        assertEquals(SyncOutcome.Success, outcome)
+        assertNull(photoDao.getById("photo-del"))
+        assertFalse(photoFile.exists())
+    }
+
+    @Test
+    fun `MediaUploader forwards ticket_id and sha256 checksum on completion`() = runTest {
+        val server = MockWebServer()
+        server.start()
+        try {
+            server.enqueue(MockResponse().setResponseCode(200))
+            val uploadUrl = server.url("/v1/media/local/doc-1.jpg").toString()
+            val docFile = mediaFileManager.createPermitDocumentFile("proj-1", "perm-doc-1").apply {
+                writeBytes(byteArrayOf(1, 2, 3, 4, 5))
+            }
+            permitDao.upsert(
+                PermitEntity(
+                    id = "perm-doc-1",
+                    projectId = "proj-1",
+                    permitName = "Fire NOC",
+                    authority = "Rescue 1122",
+                    expiryDate = "2026-12-31",
+                    createdBy = currentUserId,
+                    clientUpdatedAt = "2026-11-14T08:00:00Z",
+                    createdAt = "2026-11-14T08:00:00Z",
+                    updatedAt = "2026-11-14T08:00:00Z",
+                    documentLocalPath = docFile.absolutePath,
+                    documentUploadStatus = "PENDING"
+                )
+            )
+
+            var capturedComplete: MediaCompleteRequestDto? = null
+            coEvery { api.getUploadUrl(any()) } returns Response.success(
+                UploadTicketDto(
+                    ticketId = "ticket-123",
+                    uploadUrl = uploadUrl,
+                    method = "PUT",
+                    headers = mapOf("Content-Type" to "image/jpeg"),
+                    storageUri = "local://projects/proj-1/permits/perm-doc-1.jpg",
+                    expiresAt = "2026-11-14T12:15:00Z"
+                )
+            )
+            coEvery { api.syncPush(any()) } returns Response.success(
+                SyncPushResponseDto(
+                    serverTime = "2026-11-14T12:00:00Z",
+                    results = listOf(SyncPushResultDto("permits", "perm-doc-1", "APPLIED", 90L))
+                )
+            )
+            coEvery { api.completeMediaUpload(any()) } coAnswers {
+                capturedComplete = firstArg()
+                Response.success(Unit)
+            }
+
+            val uploader = MediaUploader(
+                api = api,
+                rawUploadClient = OkHttpClient(),
+                syncEngine = syncEngine,
+                siteLogDao = logDao,
+                siteLogPhotoDao = photoDao,
+                permitDao = permitDao,
+                clock = clock
+            )
+
+            val outcome = uploader.uploadAllPending()
+            assertEquals(SyncOutcome.Success, outcome)
+            assertEquals("ticket-123", capturedComplete?.ticketId)
+            assertEquals(MediaKind.PERMIT_DOC, capturedComplete?.kind)
+            assertEquals(64, capturedComplete?.sha256?.length)
+            assertEquals("UPLOADED", permitDao.getById("perm-doc-1")?.documentUploadStatus)
         } finally {
             server.shutdown()
         }

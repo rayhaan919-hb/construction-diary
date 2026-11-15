@@ -20,6 +20,7 @@ import com.sitediary.mobile.data.remote.dto.UploadUrlRequestDto
 import com.sitediary.mobile.data.remote.dto.UserDto
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -44,6 +45,9 @@ interface SiteDiaryApi {
 
     @POST("/v1/me/device-tokens")
     suspend fun registerDeviceToken(@Body request: DeviceTokenRequestDto): Response<Unit>
+
+    @DELETE("/v1/me/device-tokens")
+    suspend fun unregisterDeviceToken(@Query("fcm_token") fcmToken: String): Response<Unit>
 
     @GET("/v1/projects")
     suspend fun getProjects(): Response<List<ProjectSummaryDto>>

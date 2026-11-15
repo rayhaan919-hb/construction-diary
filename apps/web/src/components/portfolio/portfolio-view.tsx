@@ -29,7 +29,7 @@ export function PortfolioView({
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
 
-  const isOwner = !user || user.role === "OWNER";
+  const isOwner = user?.role === "OWNER";
 
   async function reloadProjects() {
     setLoading(true);

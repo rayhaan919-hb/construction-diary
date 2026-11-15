@@ -31,6 +31,7 @@ data class PermitsUiState(
     val isInitialLoading: Boolean = true,
     val lastSyncError: String? = null,
     val showAddDialog: Boolean = false,
+    val editingPermitId: String? = null,
     val draftPermitId: String = UUID.randomUUID().toString(),
     val permitName: String = "",
     val authority: String = "",
@@ -86,6 +87,7 @@ class PermitsViewModel @Inject constructor(
         _formState.update {
             it.copy(
                 showAddDialog = true,
+                editingPermitId = null,
                 draftPermitId = UUID.randomUUID().toString(),
                 permitName = "",
                 authority = "",
@@ -96,6 +98,32 @@ class PermitsViewModel @Inject constructor(
                 isCameraOpen = false,
                 formError = null
             )
+        }
+    }
+
+    fun openEditDialog(permit: EvaluatedPermit) {
+        _formState.update {
+            it.copy(
+                showAddDialog = true,
+                editingPermitId = permit.id,
+                draftPermitId = permit.id,
+                permitName = permit.permitName,
+                authority = permit.authority,
+                permitNumber = permit.permitNumber.orEmpty(),
+                issueDate = permit.issueDate.orEmpty(),
+                expiryDate = permit.expiryDate.toString(),
+                documentFile = null,
+                isCameraOpen = false,
+                formError = null
+            )
+        }
+    }
+
+    fun deletePermit(permitId: String) {
+        viewModelScope.launch {
+            runCatching {
+                repository.softDeletePermitOffline(permitId)
+            }
         }
     }
 
@@ -164,21 +192,34 @@ class PermitsViewModel @Inject constructor(
         viewModelScope.launch {
             _formState.update { it.copy(isSaving = true, formError = null) }
             runCatching {
-                repository.createPermitOffline(
-                    permitId = form.draftPermitId,
-                    projectId = projectId,
-                    permitName = form.permitName,
-                    authority = form.authority,
-                    permitNumber = form.permitNumber,
-                    issueDate = form.issueDate,
-                    expiryDate = parsedExpiry.toString(),
-                    documentFile = form.documentFile
-                )
+                val editingId = form.editingPermitId
+                if (editingId != null) {
+                    repository.editPermitOffline(
+                        permitId = editingId,
+                        permitName = form.permitName,
+                        authority = form.authority,
+                        permitNumber = form.permitNumber,
+                        issueDate = form.issueDate,
+                        expiryDate = parsedExpiry.toString()
+                    )
+                } else {
+                    repository.createPermitOffline(
+                        permitId = form.draftPermitId,
+                        projectId = projectId,
+                        permitName = form.permitName,
+                        authority = form.authority,
+                        permitNumber = form.permitNumber,
+                        issueDate = form.issueDate,
+                        expiryDate = parsedExpiry.toString(),
+                        documentFile = form.documentFile
+                    )
+                }
             }.onSuccess {
                 _formState.update {
                     it.copy(
                         isSaving = false,
                         showAddDialog = false,
+                        editingPermitId = null,
                         isCameraOpen = false,
                         documentFile = null
                     )

@@ -49,7 +49,7 @@ export function TeamSettingsPanel({
   onProjectUpdated,
 }: TeamSettingsPanelProps) {
   const router = useRouter();
-  const isOwner = !currentUser || currentUser.role === "OWNER";
+  const isOwner = currentUser?.role === "OWNER";
 
   // Invite supervisor state
   const [inviteEmail, setInviteEmail] = useState("");

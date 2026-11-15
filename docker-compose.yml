@@ -1,16 +1,17 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: site_diary
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-site_diary}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d site_diary"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-site_diary}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -20,36 +21,53 @@ services:
     image: fsouza/fake-gcs-server:1.49
     command: ["-scheme", "http", "-port", "4443", "-external-url", "http://localhost:4443"]
     ports:
-      - "4443:4443"
+      - "127.0.0.1:4443:4443"
     profiles: ["gcs"]
 
   api:
     build:
       context: ./services/api
+    restart: unless-stopped
     env_file:
       - .env.example
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/site_diary
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-site_diary}
       STORAGE_BACKEND: local
       PUBLIC_API_BASE_URL: http://localhost:8000
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - api_storage:/app/.storage
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
   web:
     build:
       context: ./apps/web
+    restart: unless-stopped
     environment:
       API_BASE_URL: http://api:8000
       SESSION_COOKIE_SECURE: "false"
+      NEXT_PUBLIC_DEMO_MODE: "false"
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
 volumes:
   pgdata:

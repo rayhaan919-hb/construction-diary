@@ -290,4 +290,58 @@ describe("Web Demo Mode (NEXT_PUBLIC_DEMO_MODE=true)", () => {
     expect(bytes.byteLength).toBeGreaterThan(25000);
     expect(externalUrls).toEqual([]);
   });
+
+  it("fails closed for demo mode in production and serves SaaS organization & log mutations in dev demo mode", async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevAllow = process.env.ALLOW_DEMO_IN_PRODUCTION;
+    vi.stubEnv("NODE_ENV", "production");
+    delete process.env.ALLOW_DEMO_IN_PRODUCTION;
+    expect(isDemoMode()).toBe(false);
+    vi.unstubAllEnvs();
+    if (prevNodeEnv !== undefined) {
+      vi.stubEnv("NODE_ENV", prevNodeEnv);
+    }
+    process.env.ALLOW_DEMO_IN_PRODUCTION = prevAllow;
+    process.env.NEXT_PUBLIC_DEMO_MODE = "true";
+
+    const orgRes = await bffGet(
+      new NextRequest("http://localhost:3000/api/bff/v1/organization"),
+      { params: Promise.resolve({ path: ["v1", "organization"] }) }
+    );
+    expect(orgRes.status).toBe(200);
+    expect((await orgRes.json()).plan_tier).toBe("PRO");
+
+    const auditRes = await bffGet(
+      new NextRequest("http://localhost:3000/api/bff/v1/organization/audit-logs?limit=10"),
+      { params: Promise.resolve({ path: ["v1", "organization", "audit-logs"] }) }
+    );
+    expect(auditRes.status).toBe(200);
+    expect((await auditRes.json()).items.length).toBeGreaterThan(0);
+
+    const logPatchRes = await bffPatch(
+      new NextRequest("http://localhost:3000/api/bff/v1/logs/33333333-3333-4333-8333-333333333101", {
+        method: "PATCH",
+        body: JSON.stringify({ notes: "Updated offline note in demo" }),
+      }),
+      {
+        params: Promise.resolve({
+          path: ["v1", "logs", "33333333-3333-4333-8333-333333333101"],
+        }),
+      }
+    );
+    expect(logPatchRes.status).toBe(200);
+    expect((await logPatchRes.json()).notes).toBe("Updated offline note in demo");
+
+    const logDelRes = await bffDelete(
+      new NextRequest("http://localhost:3000/api/bff/v1/logs/33333333-3333-4333-8333-333333333101", {
+        method: "DELETE",
+      }),
+      {
+        params: Promise.resolve({
+          path: ["v1", "logs", "33333333-3333-4333-8333-333333333101"],
+        }),
+      }
+    );
+    expect(logDelRes.status).toBe(204);
+  });
 });

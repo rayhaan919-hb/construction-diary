@@ -55,6 +55,10 @@ class LocalMediaFileManager @Inject constructor(
         if (mediaRootDir.exists()) {
             mediaRootDir.deleteRecursively()
         }
+        val capturesCacheDir = File(context.cacheDir, "captures")
+        if (capturesCacheDir.exists()) {
+            capturesCacheDir.deleteRecursively()
+        }
     }
 
     companion object {

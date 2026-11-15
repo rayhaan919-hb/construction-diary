@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronRight, HardHat, KeyRound, LogOut } from "lucide-react";
+import { Building2, ChevronRight, HardHat, KeyRound, LogOut } from "lucide-react";
 import { isDemoMode } from "@/lib/config";
 
 interface PortalHeaderProps {
@@ -89,6 +89,17 @@ export function PortalHeader({ user, projectBreadcrumb }: PortalHeaderProps) {
                 {user.role}
               </span>
             </div>
+          )}
+
+          {user?.role === "OWNER" && (
+            <Link
+              href="/organization"
+              className="inline-flex items-center gap-1.5 rounded-md border border-[#E2E8F0] bg-[#FFFFFF] px-2.5 py-1.5 text-xs font-medium text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
+              title="Organization & Billing"
+            >
+              <Building2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">Organization</span>
+            </Link>
           )}
 
           <Link

@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
-import { Calendar, Clock, FileDown, History, RefreshCw } from "lucide-react";
-import type { DailyReport } from "@/lib/types";
+import React, { useMemo, useState } from "react";
+import { Calendar, Clock, FileDown, History, RefreshCw, Search } from "lucide-react";
+import type { DailyReport, SiteLog, User } from "@/lib/types";
 import { formatDateShort } from "@/lib/format";
+import { downloadDailyReportPdf } from "@/lib/pdf/download-pdf";
 import {
   EmptyState,
   InlineErrorBanner,
@@ -12,9 +13,12 @@ import {
 import type { LightboxImage } from "@/components/ui/photo-lightbox";
 import { LogNoteCard } from "./log-note-card";
 
+type TimelineFilter = "ALL" | "BLOCKERS" | "VOICE" | "FAILED";
+
 interface TimelineSectionProps {
   projectId: string;
   timezone: string;
+  currentUser: User | null;
   days: DailyReport[] | null;
   nextBefore: string | null;
   loading: boolean;
@@ -24,12 +28,15 @@ interface TimelineSectionProps {
   onRetry: () => void;
   onLoadMore: () => void;
   onRetryExtraction: (logId: string) => Promise<void>;
+  onEditLog: (logId: string, notes: string) => Promise<void>;
+  onDeleteLog: (logId: string) => Promise<void>;
   onViewPhoto: (image: LightboxImage) => void;
 }
 
 export function TimelineSection({
   projectId,
   timezone,
+  currentUser,
   days,
   nextBefore,
   loading,
@@ -39,11 +46,66 @@ export function TimelineSection({
   onRetry,
   onLoadMore,
   onRetryExtraction,
+  onEditLog,
+  onDeleteLog,
   onViewPhoto,
 }: TimelineSectionProps) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filter, setFilter] = useState<TimelineFilter>("ALL");
+  const [exportingDate, setExportingDate] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const filteredDays = useMemo(() => {
+    if (!days) return null;
+    const q = searchQuery.trim().toLowerCase();
+    const matchesLog = (log: SiteLog): boolean => {
+      if (filter === "BLOCKERS" && !(log.structured_summary?.blockers?.length)) {
+        return false;
+      }
+      if (filter === "VOICE" && !log.audio_uri && !log.audio_duration_ms) {
+        return false;
+      }
+      if (filter === "FAILED" && log.extraction_status !== "FAILED") {
+        return false;
+      }
+      if (!q) return true;
+      const hay = [
+        log.author_name ?? "",
+        log.notes ?? "",
+        log.transcript ?? "",
+        log.log_date,
+        ...(log.structured_summary?.tasks_completed ?? []),
+        ...(log.structured_summary?.material_deliveries ?? []),
+        ...(log.structured_summary?.blockers ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    };
+
+    return days
+      .map((day) => ({
+        ...day,
+        logs: day.logs.filter(matchesLog),
+      }))
+      .filter((day) => day.logs.length > 0 || (!q && filter === "ALL"));
+  }, [days, searchQuery, filter]);
+
+  async function handleExportPdf(dateStr: string) {
+    setExportError(null);
+    setExportingDate(dateStr);
+    try {
+      await downloadDailyReportPdf(projectId, dateStr);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Failed to export PDF");
+    } finally {
+      setExportingDate(null);
+    }
+  }
+
   return (
     <section className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <History className="h-4 w-4 text-[#D97706]" aria-hidden="true" />
           <h2 className="text-base font-semibold text-[#0F172A]">
@@ -63,6 +125,50 @@ export function TimelineSection({
           <span>Refresh Timeline</span>
         </button>
       </div>
+
+      {/* Search & Filter Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-[#94A3B8]" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search notes, transcripts, blockers, or author..."
+            className="w-full rounded-md border border-[#E2E8F0] bg-[#FFFFFF] py-1.5 pl-8 pr-3 text-xs text-[#0F172A] focus:border-[#D97706] focus:outline-none"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(
+            [
+              ["ALL", "All"],
+              ["BLOCKERS", "Blockers"],
+              ["VOICE", "Voice"],
+              ["FAILED", "Failed AI"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilter(key)}
+              className={`rounded-md border px-2.5 py-1 text-xs font-medium cursor-pointer ${
+                filter === key
+                  ? "border-[#D97706] bg-[#FFFBEB] text-[#92400E]"
+                  : "border-[#E2E8F0] bg-[#FFFFFF] text-[#475569] hover:text-[#0F172A]"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {exportError && (
+        <InlineErrorBanner
+          title="PDF Export Error"
+          message={exportError}
+        />
+      )}
 
       {loading ? (
         <div className="space-y-4" aria-busy="true">
@@ -86,11 +192,15 @@ export function TimelineSection({
           message={error}
           onRetry={onRetry}
         />
-      ) : !days || days.length === 0 ? (
+      ) : !filteredDays || filteredDays.length === 0 ? (
         <EmptyState
           icon={<Calendar className="h-5 w-5" />}
-          title="No daily logs recorded yet"
-          description="When supervisors record voice notes or photos in the mobile field app, day-grouped reports appear here."
+          title={days && days.length > 0 ? "No matching logs" : "No daily logs recorded yet"}
+          description={
+            days && days.length > 0
+              ? "Try clearing your search query or switching the log filter."
+              : "When supervisors record voice notes or photos in the mobile field app, day-grouped reports appear here."
+          }
           action={
             <button
               type="button"
@@ -104,8 +214,8 @@ export function TimelineSection({
         />
       ) : (
         <div className="space-y-6">
-          {days.map((day) => {
-            const pdfUrl = `/api/reports/${projectId}/${day.log_date}/pdf`;
+          {filteredDays.map((day) => {
+            const isExporting = exportingDate === day.log_date;
             return (
               <div
                 key={day.log_date}
@@ -137,13 +247,15 @@ export function TimelineSection({
                     )}
                   </div>
 
-                  <a
-                    href={pdfUrl}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-md border border-[#E2E8F0] bg-[#FFFFFF] px-3 py-1.5 text-xs font-semibold text-[#0F172A] hover:border-[#D97706] hover:text-[#B45309] shrink-0"
+                  <button
+                    type="button"
+                    disabled={isExporting}
+                    onClick={() => handleExportPdf(day.log_date)}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-md border border-[#E2E8F0] bg-[#FFFFFF] px-3 py-1.5 text-xs font-semibold text-[#0F172A] hover:border-[#D97706] hover:text-[#B45309] disabled:opacity-50 shrink-0 cursor-pointer"
                   >
                     <FileDown className="h-3.5 w-3.5 text-[#D97706]" aria-hidden="true" />
-                    <span>Export PDF</span>
-                  </a>
+                    <span>{isExporting ? "Rendering PDF..." : "Export PDF"}</span>
+                  </button>
                 </div>
 
                 {/* Day Logs */}
@@ -153,7 +265,13 @@ export function TimelineSection({
                       key={log.id}
                       log={log}
                       timezone={timezone}
+                      canManage={
+                        currentUser?.role === "OWNER" ||
+                        log.author_id === currentUser?.id
+                      }
                       onRetryExtraction={onRetryExtraction}
+                      onEditLog={onEditLog}
+                      onDeleteLog={onDeleteLog}
                       onViewPhoto={onViewPhoto}
                     />
                   ))}

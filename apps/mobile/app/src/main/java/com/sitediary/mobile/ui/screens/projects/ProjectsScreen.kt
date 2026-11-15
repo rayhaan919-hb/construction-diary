@@ -18,13 +18,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Apartment
 import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.LockReset
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -40,17 +47,22 @@ import com.sitediary.mobile.ui.components.CardSkeletonList
 import com.sitediary.mobile.ui.components.FlatCard
 import com.sitediary.mobile.ui.components.InlineErrorRetryBanner
 import com.sitediary.mobile.ui.components.LanguageToggleChip
+import com.sitediary.mobile.ui.components.OfflineStatusBanner
 import com.sitediary.mobile.ui.components.SecondaryOutdoorButton
 import com.sitediary.mobile.ui.components.StatusChip
+import com.sitediary.mobile.ui.components.rememberIsOnline
 import com.sitediary.mobile.ui.theme.SiteColors
 import com.sitediary.mobile.ui.theme.SiteTextStyles
 
 @Composable
 fun ProjectsScreen(
     onOpenProject: (String) -> Unit,
+    onChangePassword: () -> Unit = {},
     viewModel: ProjectsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val isOnline = rememberIsOnline()
+    var showSignOutConfirm by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -58,6 +70,9 @@ fun ProjectsScreen(
             .background(SiteColors.BgCanvas)
             .safeDrawingPadding()
     ) {
+        if (!isOnline) {
+            OfflineStatusBanner()
+        }
         // Top header bar
         Column(
             modifier = Modifier
@@ -83,16 +98,57 @@ fun ProjectsScreen(
                         )
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onChangePassword) {
+                        Icon(
+                            imageVector = Icons.Outlined.LockReset,
+                            contentDescription = stringResource(R.string.change_password_cta),
+                            tint = SiteColors.TextPrimary
+                        )
+                    }
                     LanguageToggleChip(
                         currentLocale = state.currentLocale,
                         onToggleLocale = viewModel::toggleLocale
                     )
                     SecondaryOutdoorButton(
                         text = stringResource(R.string.sign_out),
-                        onClick = viewModel::signOut
+                        onClick = { showSignOutConfirm = true }
                     )
                 }
+            }
+
+            if (showSignOutConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showSignOutConfirm = false },
+                    title = { Text(text = stringResource(R.string.sign_out_confirm_title)) },
+                    text = {
+                        Text(
+                            text = if (state.pendingSyncCount > 0) {
+                                stringResource(R.string.sign_out_pending_warning, state.pendingSyncCount)
+                            } else {
+                                stringResource(R.string.sign_out_clean_message)
+                            }
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                showSignOutConfirm = false
+                                viewModel.signOut()
+                            }
+                        ) {
+                            Text(text = stringResource(R.string.sign_out))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showSignOutConfirm = false }) {
+                            Text(text = stringResource(R.string.cancel_cta))
+                        }
+                    }
+                )
             }
 
             // Sync status & manual trigger

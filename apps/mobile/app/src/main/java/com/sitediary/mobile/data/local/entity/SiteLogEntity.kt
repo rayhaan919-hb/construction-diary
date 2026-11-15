@@ -29,6 +29,8 @@ data class SiteLogEntity(
     val notes: String? = null,
     @ColumnInfo(name = "audio_uri")
     val audioUri: String? = null,
+    @ColumnInfo(name = "audio_url")
+    val audioUrl: String? = null,
     @ColumnInfo(name = "audio_duration_ms")
     val audioDurationMs: Int? = null,
     @ColumnInfo(name = "audio_upload_status")

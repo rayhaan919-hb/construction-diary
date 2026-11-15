@@ -72,6 +72,16 @@ interface SiteLogPhotoDao {
     @Query(
         """
         UPDATE site_log_photos
+        SET sync_dirty = 1,
+            sync_error = CASE WHEN local_mutation_seq = :expectedSeq THEN :error ELSE sync_error END
+        WHERE id = :id
+        """
+    )
+    suspend fun markSyncConflictIfSeqMatches(id: String, expectedSeq: Long, error: String)
+
+    @Query(
+        """
+        UPDATE site_log_photos
         SET storage_uri = :storageUri,
             sync_dirty = 1,
             local_mutation_seq = local_mutation_seq + 1
@@ -92,6 +102,9 @@ interface SiteLogPhotoDao {
 
     @Query("UPDATE site_log_photos SET local_path = NULL WHERE id = :id")
     suspend fun clearLocalPath(id: String)
+
+    @Query("DELETE FROM site_log_photos WHERE id = :id")
+    suspend fun deleteById(id: String)
 
     @Query("DELETE FROM site_log_photos WHERE project_id = :projectId")
     suspend fun deleteByProjectId(projectId: String)

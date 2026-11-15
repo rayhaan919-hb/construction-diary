@@ -344,4 +344,66 @@ describe("Portfolio & Project page data loading guards", () => {
       "Timeline temporarily unavailable"
     );
   });
+
+  it("enforces BFF CSRF protection, encoded path sanitization, 1 MB limit, calendar date checks, and HS256 JWT signatures", async () => {
+    const csrfRes = await bffPost(
+      new NextRequest("http://localhost:3000/api/bff/v1/projects", {
+        method: "POST",
+        body: JSON.stringify({ name: "X" }),
+        headers: {
+          "Content-Type": "application/json",
+          "Sec-Fetch-Site": "cross-site",
+          cookie: `${ACCESS_COOKIE_NAME}=${makeJwt(600)}`,
+        },
+      }),
+      { params: Promise.resolve({ path: ["v1", "projects"] }) }
+    );
+    expect(csrfRes.status).toBe(403);
+    expect((await csrfRes.json()).code).toBe("CSRF_FORBIDDEN");
+
+    const encodedRes = await bffGet(
+      new NextRequest("http://localhost:3000/api/bff/v1/projects/..%2Fadmin"),
+      { params: Promise.resolve({ path: ["v1", "projects", "..%2Fadmin"] }) }
+    );
+    expect(encodedRes.status).toBe(400);
+    expect((await encodedRes.json()).code).toBe("INVALID_PATH");
+
+    const bigRes = await bffPost(
+      new NextRequest("http://localhost:3000/api/bff/v1/projects", {
+        method: "POST",
+        body: "{}",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": String(2 * 1024 * 1024),
+        },
+      }),
+      { params: Promise.resolve({ path: ["v1", "projects"] }) }
+    );
+    expect(bigRes.status).toBe(413);
+    expect((await bigRes.json()).code).toBe("PAYLOAD_TOO_LARGE");
+
+    const { GET: pdfGet } = await import("@/app/api/reports/[projectId]/[date]/pdf/route");
+    const badDateRes = await pdfGet(
+      new NextRequest("http://localhost:3000/api/reports/11111111-1111-4111-8111-111111111111/2026-02-31/pdf"),
+      {
+        params: Promise.resolve({
+          projectId: "11111111-1111-4111-8111-111111111111",
+          date: "2026-02-31",
+        }),
+      }
+    );
+    expect(badDateRes.status).toBe(400);
+    expect((await badDateRes.json()).code).toBe("VALIDATION");
+
+    const { verifyJwtHs256Signature } = await import("@/lib/jwt");
+    const crypto = await import("node:crypto");
+    const secret = "test-secret-0123456789abcdef0123456789abcdef";
+    const hdr = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+    const pld = Buffer.from(
+      JSON.stringify({ sub: "u1", exp: Math.floor(Date.now() / 1000) + 600 })
+    ).toString("base64url");
+    const sig = crypto.createHmac("sha256", secret).update(`${hdr}.${pld}`).digest("base64url");
+    expect(await verifyJwtHs256Signature(`${hdr}.${pld}.${sig}`, secret)).toBe(true);
+    expect(await verifyJwtHs256Signature(`${hdr}.${pld}.tampered`, secret)).toBe(false);
+  });
 });

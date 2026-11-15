@@ -107,6 +107,7 @@ class AuthRepository @Inject constructor(
     }
 
     suspend fun logout() {
+        fcmTokenManager.unregisterCurrentToken()
         val refreshToken = appPreferences.getRefreshToken()
         if (!refreshToken.isNullOrBlank()) {
             runCatching {
@@ -115,6 +116,7 @@ class AuthRepository @Inject constructor(
         }
         syncScheduler.cancelAllSyncWork()
         appPreferences.clearSession()
+        appPreferences.clearAllSettingsOnLogout()
         withContext(Dispatchers.IO) {
             database.clearAllTables()
             mediaFileManager.clearAllMedia()

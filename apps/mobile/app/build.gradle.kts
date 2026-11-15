@@ -40,9 +40,33 @@ android {
         buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+                ?: project.findProperty("RELEASE_STORE_FILE")?.toString()
+            if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                    ?: project.findProperty("RELEASE_STORE_PASSWORD")?.toString()
+                    ?: ""
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                    ?: project.findProperty("RELEASE_KEY_ALIAS")?.toString()
+                    ?: ""
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+                    ?: project.findProperty("RELEASE_KEY_PASSWORD")?.toString()
+                    ?: ""
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile != null) {
+                signingConfig = releaseSigning
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

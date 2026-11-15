@@ -6,7 +6,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -27,8 +29,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -168,7 +174,11 @@ fun PermitsScreen(
                 }
             } else {
                 items(state.permits, key = { it.id }) { permit ->
-                    PermitCard(permit = permit)
+                    PermitCard(
+                        permit = permit,
+                        onEdit = { viewModel.openEditDialog(permit) },
+                        onDelete = { viewModel.deletePermit(permit.id) }
+                    )
                 }
             }
         }
@@ -194,7 +204,14 @@ fun PermitsScreen(
 }
 
 @Composable
-private fun PermitCard(permit: EvaluatedPermit) {
+private fun PermitCard(
+    permit: EvaluatedPermit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var showDeleteConfirm by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var zoomDocModel by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Any?>(null) }
+
     val (statusLabel, statusColor, statusBg) = when (permit.status) {
         PermitStatus.ACTIVE -> Triple(
             stringResource(R.string.permit_status_active),
@@ -270,10 +287,13 @@ private fun PermitCard(permit: EvaluatedPermit) {
         }
 
         val docFile = permit.documentLocalPath?.let { File(it) }?.takeIf { it.exists() }
-        if (docFile != null) {
+        val docModel: Any? = docFile ?: permit.documentPhotoUri?.takeIf {
+            it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true)
+        }
+        if (docModel != null) {
             Spacer(modifier = Modifier.height(12.dp))
             AsyncImage(
-                model = docFile,
+                model = docModel,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -281,7 +301,86 @@ private fun PermitCard(permit: EvaluatedPermit) {
                     .height(120.dp)
                     .clip(RoundedCornerShape(6.dp))
                     .border(1.dp, SiteColors.BorderLight, RoundedCornerShape(6.dp))
+                    .clickable { zoomDocModel = docModel }
             )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SecondaryOutdoorButton(
+                text = stringResource(R.string.edit_permit_cta),
+                icon = Icons.Outlined.Edit,
+                modifier = Modifier.weight(1f),
+                onClick = onEdit
+            )
+            SecondaryOutdoorButton(
+                text = stringResource(R.string.delete_permit_cta),
+                icon = Icons.Outlined.Delete,
+                onClick = { showDeleteConfirm = true }
+            )
+        }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(text = stringResource(R.string.delete_permit_confirm_title)) },
+            text = { Text(text = stringResource(R.string.delete_permit_confirm_body)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDelete()
+                    }
+                ) {
+                    Text(
+                        text = stringResource(R.string.delete_confirm_cta),
+                        color = SiteColors.StatusExpired
+                    )
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text(text = stringResource(R.string.cancel_cta))
+                }
+            }
+        )
+    }
+
+    zoomDocModel?.let { model ->
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { zoomDocModel = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(SiteColors.TextPrimary)
+            ) {
+                AsyncImage(
+                    model = model,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                )
+                IconButton(
+                    onClick = { zoomDocModel = null },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = stringResource(R.string.photo_preview_close),
+                        tint = SiteColors.BgSurface
+                    )
+                }
+            }
         }
     }
 }

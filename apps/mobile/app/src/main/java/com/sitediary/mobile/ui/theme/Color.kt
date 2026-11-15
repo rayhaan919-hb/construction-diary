@@ -11,7 +11,7 @@ object SiteColors {
 
     val TextPrimary = Color(0xFF0F172A)
     val TextSecondary = Color(0xFF475569)
-    val TextMuted = Color(0xFF64748B)
+    val TextMuted = Color(0xFF475569)
 
     val AccentPrimary = Color(0xFFD97706) // Construction Amber
     val AccentPrimaryDark = Color(0xFFB45309)

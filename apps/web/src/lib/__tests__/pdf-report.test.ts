@@ -4,6 +4,7 @@ import type { DailyReport, Permit, Project } from "@/lib/types";
 import { renderDailyReportPdfBuffer } from "@/lib/pdf/daily-report-pdf";
 import {
   fetchCompressedLogPhotos,
+  isSafeMediaFetchUrl,
   resolveServerMediaUrl,
 } from "@/lib/pdf/photo-fetcher";
 
@@ -183,5 +184,21 @@ describe("PDF daily report generation", () => {
     ]);
 
     expect(map.size).toBe(0);
+  });
+
+  it("blocks private/metadata/non-HTTPS media URLs via SSRF guard while allowing configured API media and HTTPS GCS URLs", () => {
+    const prev = process.env.API_BASE_URL;
+    process.env.API_BASE_URL = "http://api:8000";
+    try {
+      expect(isSafeMediaFetchUrl("http://169.254.169.254/latest/meta-data/")).toBe(false);
+      expect(isSafeMediaFetchUrl("https://169.254.169.254/latest/meta-data/")).toBe(false);
+      expect(isSafeMediaFetchUrl("https://10.0.0.4/internal.jpg")).toBe(false);
+      expect(isSafeMediaFetchUrl("http://storage.googleapis.com/bucket/a.jpg")).toBe(false);
+      expect(isSafeMediaFetchUrl("http://api:8000/v1/admin/secret")).toBe(false);
+      expect(isSafeMediaFetchUrl("http://api:8000/v1/media/local/photo.jpg?sig=1")).toBe(true);
+      expect(isSafeMediaFetchUrl("https://storage.googleapis.com/bucket/photo.jpg?sig=1")).toBe(true);
+    } finally {
+      process.env.API_BASE_URL = prev;
+    }
   });
 });

@@ -22,6 +22,7 @@ interface PermitsTileProps {
   permits: Permit[] | null;
   loading: boolean;
   error: string | null;
+  isOwner?: boolean;
   onRetry: () => void;
   onAdd: () => void;
   onEdit: (permit: Permit) => void;
@@ -33,6 +34,7 @@ export function PermitsTile({
   permits,
   loading,
   error,
+  isOwner = false,
   onRetry,
   onAdd,
   onEdit,
@@ -72,14 +74,16 @@ export function PermitsTile({
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onAdd}
-          className="inline-flex items-center gap-1 rounded-md bg-[#D97706] px-2.5 py-1.5 text-xs font-semibold text-[#FFFFFF] hover:bg-[#B45309] cursor-pointer"
-        >
-          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>Add Permit</span>
-        </button>
+        {isOwner && (
+          <button
+            type="button"
+            onClick={onAdd}
+            className="inline-flex items-center gap-1 rounded-md bg-[#D97706] px-2.5 py-1.5 text-xs font-semibold text-[#FFFFFF] hover:bg-[#B45309] cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Add Permit</span>
+          </button>
+        )}
       </div>
 
       <div className="flex-1 p-4 space-y-3">
@@ -118,14 +122,16 @@ export function PermitsTile({
             title="No permits recorded"
             description="Track municipal approvals and safety certificates to receive expiry countdown alerts."
             action={
-              <button
-                type="button"
-                onClick={onAdd}
-                className="inline-flex items-center gap-1.5 rounded-md bg-[#D97706] px-3.5 py-2 text-xs font-semibold text-[#FFFFFF] hover:bg-[#B45309] cursor-pointer"
-              >
-                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Add First Permit</span>
-              </button>
+              isOwner ? (
+                <button
+                  type="button"
+                  onClick={onAdd}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-[#D97706] px-3.5 py-2 text-xs font-semibold text-[#FFFFFF] hover:bg-[#B45309] cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Add First Permit</span>
+                </button>
+              ) : undefined
             }
           />
         ) : (
@@ -190,16 +196,18 @@ export function PermitsTile({
                       </button>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => onEdit(permit)}
-                      aria-label={`Edit ${permit.permit_name}`}
-                      className="rounded border border-[#E2E8F0] bg-[#FFFFFF] p-1.5 text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A] cursor-pointer"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={() => onEdit(permit)}
+                        aria-label={`Edit ${permit.permit_name}`}
+                        className="rounded border border-[#E2E8F0] bg-[#FFFFFF] p-1.5 text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A] cursor-pointer"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
 
-                    {confirmDeleteId === permit.id ? (
+                    {isOwner && (confirmDeleteId === permit.id ? (
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
@@ -226,7 +234,7 @@ export function PermitsTile({
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                    )}
+                    ))}
                   </div>
                 </div>
               );

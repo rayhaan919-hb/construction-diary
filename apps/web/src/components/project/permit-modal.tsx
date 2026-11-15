@@ -1,11 +1,18 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { AlertCircle } from "lucide-react";
-import type { Permit, PermitInput, PermitPatch } from "@/lib/types";
+import { AlertCircle, Upload } from "lucide-react";
+import type { Permit, PermitInput, PermitPatch, UploadTicket } from "@/lib/types";
 import { bffFetch } from "@/lib/bff-client";
 import { getErrorMessage } from "@/lib/problem";
 import { Modal } from "@/components/ui/modal";
+
+async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 interface PermitModalProps {
   open: boolean;
@@ -27,12 +34,14 @@ export function PermitModal({
   const [permitNumber, setPermitNumber] = useState("");
   const [issueDate, setIssueDate] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
+  const [docFile, setDocFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setDocFile(null);
     if (editingPermit) {
       setPermitName(editingPermit.permit_name);
       setAuthority(editingPermit.authority);
@@ -54,6 +63,8 @@ export function PermitModal({
     setSubmitting(true);
 
     try {
+      let savedPermit: Permit;
+      const isEdit = Boolean(editingPermit);
       if (editingPermit) {
         const patch: PermitPatch = {
           permit_name: permitName.trim(),
@@ -62,11 +73,10 @@ export function PermitModal({
           issue_date: issueDate.trim() ? issueDate.trim() : null,
           expiry_date: expiryDate,
         };
-        const updated = await bffFetch<Permit>(`/v1/permits/${editingPermit.id}`, {
+        savedPermit = await bffFetch<Permit>(`/v1/permits/${editingPermit.id}`, {
           method: "PATCH",
           body: JSON.stringify(patch),
         });
-        onSaved(updated, true);
       } else {
         const input: PermitInput = {
           permit_name: permitName.trim(),
@@ -75,15 +85,64 @@ export function PermitModal({
           issue_date: issueDate.trim() ? issueDate.trim() : null,
           expiry_date: expiryDate,
         };
-        const created = await bffFetch<Permit>(
+        savedPermit = await bffFetch<Permit>(
           `/v1/projects/${projectId}/permits`,
           {
             method: "POST",
             body: JSON.stringify(input),
           }
         );
-        onSaved(created, false);
       }
+
+      if (docFile) {
+        const allowedTypes = new Set([
+          "image/jpeg",
+          "image/png",
+          "image/webp",
+          "application/pdf",
+        ]);
+        const contentType = allowedTypes.has(docFile.type)
+          ? docFile.type
+          : "image/jpeg";
+        const fileBytes = await docFile.arrayBuffer();
+        const sha256 = await sha256Hex(fileBytes);
+        const ticket = await bffFetch<UploadTicket>("/v1/media/upload-url", {
+          method: "POST",
+          body: JSON.stringify({
+            kind: "PERMIT_DOC",
+            project_id: projectId,
+            object_id: savedPermit.id,
+            content_type: contentType,
+            byte_size: fileBytes.byteLength,
+          }),
+        });
+
+        const putRes = await fetch(ticket.upload_url, {
+          method: ticket.method || "PUT",
+          headers: ticket.headers,
+          body: fileBytes,
+        });
+        if (!putRes.ok) {
+          throw new Error(`Permit document upload failed (${putRes.status})`);
+        }
+
+        await bffFetch<void>("/v1/media/complete", {
+          method: "POST",
+          body: JSON.stringify({
+            kind: "PERMIT_DOC",
+            object_id: savedPermit.id,
+            ticket_id: ticket.ticket_id ?? undefined,
+            sha256,
+          }),
+        });
+
+        savedPermit = await bffFetch<Permit>(`/v1/permits/${savedPermit.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ document_photo_uri: ticket.storage_uri }),
+        });
+      }
+
+      onSaved(savedPermit, isEdit);
     } catch (err) {
       setError(getErrorMessage(err, "Failed to save permit"));
     } finally {
@@ -197,6 +256,30 @@ export function PermitModal({
               className="w-full rounded-md border border-[#E2E8F0] bg-[#FFFFFF] px-3 py-2 font-mono text-sm tabular-nums text-[#0F172A] focus:border-[#D97706] focus:outline-none"
             />
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label
+            htmlFor="permit-doc"
+            className="block text-xs font-semibold uppercase tracking-wide text-[#475569]"
+          >
+            Permit Scan / Photo (Optional, JPEG/PNG/WebP/PDF)
+          </label>
+          <label className="flex items-center justify-between rounded-md border border-dashed border-[#CBD5E1] bg-[#F8FAFC] px-3 py-2 text-xs text-[#475569] hover:border-[#D97706] cursor-pointer">
+            <span className="inline-flex items-center gap-2 truncate">
+              <Upload className="h-4 w-4 text-[#D97706] shrink-0" />
+              <span className="truncate">
+                {docFile ? docFile.name : "Choose permit scan file..."}
+              </span>
+            </span>
+            <input
+              id="permit-doc"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              onChange={(e) => setDocFile(e.target.files?.[0] ?? null)}
+              className="sr-only"
+            />
+          </label>
         </div>
 
         <div className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] pt-4">

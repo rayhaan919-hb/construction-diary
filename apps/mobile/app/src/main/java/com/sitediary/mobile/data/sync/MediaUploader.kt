@@ -13,6 +13,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.time.Clock
 import javax.inject.Inject
 import javax.inject.Named
@@ -107,7 +108,7 @@ class MediaUploader @Inject constructor(
                 onStorageUriReceived = { storageUri ->
                     permitDao.setDocumentStorageUriAndMarkDirty(permit.id, storageUri)
                 },
-                callComplete = false,
+                callComplete = true,
                 onUploadCompleted = { uploadedAt ->
                     permitDao.markDocumentUploaded(permit.id, uploadedAt)
                 }
@@ -175,9 +176,16 @@ class MediaUploader @Inject constructor(
             }
         }
 
-        // 4. Confirm upload for AUDIO and PHOTO via /v1/media/complete and record timestamp
+        val sha256Hex = computeSha256Hex(file)
+
+        // 4. Confirm upload via /v1/media/complete (with ticket_id + sha256 verification)
         if (callComplete) {
-            val completeResult = completeWithSinglePushRetry(kind, objectId)
+            val completeResult = completeWithSinglePushRetry(
+                kind = kind,
+                objectId = objectId,
+                ticketId = ticket.ticketId,
+                sha256Hex = sha256Hex
+            )
             if (completeResult !is SyncOutcome.Success) return completeResult
         }
 
@@ -185,8 +193,18 @@ class MediaUploader @Inject constructor(
         return SyncOutcome.Success
     }
 
-    private suspend fun completeWithSinglePushRetry(kind: MediaKind, objectId: String): SyncOutcome {
-        val req = MediaCompleteRequestDto(kind = kind, objectId = objectId)
+    private suspend fun completeWithSinglePushRetry(
+        kind: MediaKind,
+        objectId: String,
+        ticketId: String?,
+        sha256Hex: String
+    ): SyncOutcome {
+        val req = MediaCompleteRequestDto(
+            kind = kind,
+            objectId = objectId,
+            ticketId = ticketId,
+            sha256 = sha256Hex
+        )
         val firstRes = try {
             api.completeMediaUpload(req)
         } catch (e: IOException) {
@@ -209,5 +227,18 @@ class MediaUploader @Inject constructor(
         }
 
         return SyncOutcome.RetryableError("HTTP ${firstRes.code()} completing media upload")
+    }
+
+    private fun computeSha256Hex(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buf = ByteArray(8192)
+            while (true) {
+                val read = input.read(buf)
+                if (read <= 0) break
+                digest.update(buf, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }

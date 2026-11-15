@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -16,11 +16,13 @@ import type {
   Member,
   Permit,
   Project,
+  SiteLog,
   TimelineResponse,
   User,
 } from "@/lib/types";
 import { bffFetch } from "@/lib/bff-client";
 import { getTodayInTimezone } from "@/lib/format";
+import { downloadDailyReportPdf } from "@/lib/pdf/download-pdf";
 import { getErrorMessage } from "@/lib/problem";
 import { PortalHeader } from "@/components/layout/portal-header";
 import { InlineErrorBanner } from "@/components/ui/states";
@@ -109,11 +111,39 @@ export function ProjectDashboardView({
   const [permitModalOpen, setPermitModalOpen] = useState(false);
   const [editingPermit, setEditingPermit] = useState<Permit | null>(null);
   const [lightboxImage, setLightboxImage] = useState<LightboxImage | null>(null);
+  const [exportingTodayPdf, setExportingTodayPdf] = useState(false);
+  const [todayPdfError, setTodayPdfError] = useState<string | null>(null);
 
+  const isOwner = user?.role === "OWNER";
   const effectiveTimezone = project?.timezone ?? "Asia/Karachi";
   const todayDate = project
     ? getTodayInTimezone(project.timezone)
     : initialTodayDate;
+
+  const hasPendingExtraction = Boolean(
+    timelineDays?.some((day) =>
+      day.logs.some(
+        (log) =>
+          log.extraction_status === "PROCESSING" ||
+          log.extraction_status === "PENDING"
+      )
+    )
+  );
+
+  useEffect(() => {
+    if (!hasPendingExtraction || !project) return;
+    const intervalId = setInterval(() => {
+      void bffFetch<TimelineResponse>(`/v1/projects/${projectId}/timeline?days=7`)
+        .then((resp) => {
+          setTimelineDays(resp.days);
+          setNextBefore(resp.next_before);
+        })
+        .catch(() => {
+          // Transient polling errors are ignored until next interval
+        });
+    }, 4000);
+    return () => clearInterval(intervalId);
+  }, [hasPendingExtraction, project, projectId]);
 
   async function reloadPermits() {
     setPermitsLoading(true);
@@ -250,6 +280,45 @@ export function ProjectDashboardView({
     setTodayReport((prev) => (prev ? patchLog(prev) : prev));
   }
 
+  async function handleEditLog(logId: string, notes: string) {
+    const updated = await bffFetch<SiteLog>(`/v1/logs/${logId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ notes }),
+    });
+    const replaceLog = (day: DailyReport): DailyReport => ({
+      ...day,
+      logs: day.logs.map((l) => (l.id === logId ? updated : l)),
+    });
+    setTimelineDays((prev) => (prev ? prev.map(replaceLog) : prev));
+    setTodayReport((prev) => (prev ? replaceLog(prev) : prev));
+  }
+
+  async function handleDeleteLog(logId: string) {
+    await bffFetch<void>(`/v1/logs/${logId}`, { method: "DELETE" });
+    const removeLog = (day: DailyReport): DailyReport => ({
+      ...day,
+      logs: day.logs.filter((l) => l.id !== logId),
+      log_count: Math.max(0, day.log_count - (day.logs.some((l) => l.id === logId) ? 1 : 0)),
+    });
+    setTimelineDays((prev) =>
+      prev ? prev.map(removeLog).filter((d) => d.logs.length > 0) : prev
+    );
+    setTodayReport((prev) => (prev ? removeLog(prev) : prev));
+  }
+
+  async function handleExportTodayPdf() {
+    if (!project) return;
+    setTodayPdfError(null);
+    setExportingTodayPdf(true);
+    try {
+      await downloadDailyReportPdf(project.id, todayDate);
+    } catch (err) {
+      setTodayPdfError(err instanceof Error ? err.message : "Failed to export PDF");
+    } finally {
+      setExportingTodayPdf(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <PortalHeader
@@ -306,15 +375,24 @@ export function ProjectDashboardView({
               </div>
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
-                <a
-                  href={`/api/reports/${project.id}/${todayDate}/pdf`}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-[#D97706] px-3.5 py-2 text-sm font-semibold text-[#FFFFFF] hover:bg-[#B45309]"
+                <button
+                  type="button"
+                  disabled={exportingTodayPdf}
+                  onClick={handleExportTodayPdf}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-[#D97706] px-3.5 py-2 text-sm font-semibold text-[#FFFFFF] hover:bg-[#B45309] disabled:opacity-50 cursor-pointer"
                 >
                   <FileDown className="h-4 w-4" aria-hidden="true" />
-                  <span>Export Today PDF</span>
-                </a>
+                  <span>{exportingTodayPdf ? "Generating PDF..." : "Export Today PDF"}</span>
+                </button>
               </div>
             </div>
+
+            {todayPdfError && (
+              <InlineErrorBanner
+                title="Could not export today's PDF"
+                message={todayPdfError}
+              />
+            )}
 
             {/* Section Tabs */}
             <div
@@ -367,6 +445,7 @@ export function ProjectDashboardView({
                     permits={permits}
                     loading={permitsLoading}
                     error={permitsError}
+                    isOwner={isOwner}
                     onRetry={reloadPermits}
                     onAdd={() => {
                       setEditingPermit(null);
@@ -397,6 +476,7 @@ export function ProjectDashboardView({
                 <TimelineSection
                   projectId={project.id}
                   timezone={project.timezone}
+                  currentUser={user}
                   days={timelineDays}
                   nextBefore={nextBefore}
                   loading={timelineLoading}
@@ -406,6 +486,8 @@ export function ProjectDashboardView({
                   onRetry={reloadTimeline}
                   onLoadMore={handleLoadMoreTimeline}
                   onRetryExtraction={handleRetryExtraction}
+                  onEditLog={handleEditLog}
+                  onDeleteLog={handleDeleteLog}
                   onViewPhoto={setLightboxImage}
                 />
               </div>

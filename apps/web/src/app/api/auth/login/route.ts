@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getApiBaseUrl, isDemoMode } from "@/lib/config";
+import { verifySameOriginRequest } from "@/lib/csrf";
 import { setAuthCookies } from "@/lib/auth-cookies";
 import type { RefreshedTokenPair } from "@/lib/auth-refresh";
 import { createDemoTokenPair } from "@/lib/demo-data";
 
 export async function POST(req: NextRequest) {
+  if (!verifySameOriginRequest(req)) {
+    return NextResponse.json(
+      {
+        type: "about:blank",
+        title: "Forbidden",
+        status: 403,
+        code: "CSRF_FORBIDDEN",
+        detail: "Cross-origin login requests are blocked.",
+      },
+      { status: 403 }
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();

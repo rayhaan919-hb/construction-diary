@@ -5,9 +5,23 @@ import {
   getApiBaseUrl,
   isDemoMode,
 } from "@/lib/config";
+import { verifySameOriginRequest } from "@/lib/csrf";
 import { clearAuthCookies } from "@/lib/auth-cookies";
 
 export async function POST(req: NextRequest) {
+  if (!verifySameOriginRequest(req)) {
+    return NextResponse.json(
+      {
+        type: "about:blank",
+        title: "Forbidden",
+        status: 403,
+        code: "CSRF_FORBIDDEN",
+        detail: "Cross-origin logout requests are blocked.",
+      },
+      { status: 403 }
+    );
+  }
+
   const accessToken = req.cookies.get(ACCESS_COOKIE_NAME)?.value;
   const refreshToken = req.cookies.get(REFRESH_COOKIE_NAME)?.value;
 

@@ -11,6 +11,9 @@ interface SyncCursorDao {
     @Query("SELECT cursor FROM sync_cursors WHERE scope_key = :scopeKey")
     suspend fun getCursor(scopeKey: String): Long?
 
+    @Query("SELECT * FROM sync_cursors WHERE scope_key LIKE :prefix || '%'")
+    suspend fun getByPrefix(prefix: String): List<SyncCursorEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: SyncCursorEntity)
 

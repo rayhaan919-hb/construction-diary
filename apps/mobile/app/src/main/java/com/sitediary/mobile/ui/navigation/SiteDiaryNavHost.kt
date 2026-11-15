@@ -89,9 +89,13 @@ fun SiteDiaryNavHost(
         }
 
         composable(Routes.PROJECTS) {
+            com.sitediary.mobile.ui.components.NotificationPermissionRequester(shouldRequest = true)
             ProjectsScreen(
                 onOpenProject = { projectId ->
                     navController.navigate(Routes.diary(projectId))
+                },
+                onChangePassword = {
+                    navController.navigate(Routes.CHANGE_PASSWORD)
                 }
             )
         }

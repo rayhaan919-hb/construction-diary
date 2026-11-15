@@ -89,8 +89,37 @@ class LogDetailViewModel @Inject constructor(
     }
 
     fun toggleAudioPlayback() {
-        val path = uiState.value.logWithPhotos?.log?.audioLocalPath ?: return
-        audioRecorder.togglePlayback(path)
+        val log = uiState.value.logWithPhotos?.log ?: return
+        val source = log.audioLocalPath ?: log.audioUrl ?: return
+        audioRecorder.togglePlayback(source)
+    }
+
+    fun updateNotes(notes: String) {
+        viewModelScope.launch {
+            _formState.update { it.copy(isSaving = true, errorMessage = null, feedbackMessage = null) }
+            runCatching {
+                repository.editSiteLogNotesOffline(logId, notes)
+            }.onSuccess {
+                _formState.update { it.copy(isSaving = false, feedbackMessage = "Notes saved offline & queued for sync") }
+            }.onFailure { err ->
+                _formState.update { it.copy(isSaving = false, errorMessage = err.message ?: "Failed to update notes") }
+            }
+        }
+    }
+
+    fun deleteLog(onDeleted: () -> Unit) {
+        viewModelScope.launch {
+            _formState.update { it.copy(isSaving = true, errorMessage = null) }
+            runCatching {
+                audioRecorder.stopPlayback()
+                repository.softDeleteSiteLogOffline(logId)
+            }.onSuccess {
+                _formState.update { it.copy(isSaving = false) }
+                onDeleted()
+            }.onFailure { err ->
+                _formState.update { it.copy(isSaving = false, errorMessage = err.message ?: "Failed to delete log") }
+            }
+        }
     }
 
     fun saveCorrections() {

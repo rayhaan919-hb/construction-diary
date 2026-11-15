@@ -2,6 +2,7 @@ package com.sitediary.mobile.ui.screens.detail
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,16 +23,24 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +48,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -62,6 +73,8 @@ fun LogDetailScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val logWithPhotos = state.logWithPhotos
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var zoomedPhotoModel by remember { mutableStateOf<Any?>(null) }
 
     Column(
         modifier = Modifier
@@ -92,6 +105,78 @@ fun LogDetailScreen(
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f)
             )
+            if (logWithPhotos != null) {
+                IconButton(
+                    onClick = { showDeleteConfirm = true },
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Delete,
+                        contentDescription = stringResource(R.string.delete_log_cta),
+                        tint = SiteColors.StatusExpired
+                    )
+                }
+            }
+        }
+
+        if (showDeleteConfirm) {
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirm = false },
+                title = { Text(text = stringResource(R.string.delete_log_confirm_title)) },
+                text = { Text(text = stringResource(R.string.delete_log_confirm_body)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showDeleteConfirm = false
+                            viewModel.deleteLog(onDeleted = onBack)
+                        }
+                    ) {
+                        Text(
+                            text = stringResource(R.string.delete_confirm_cta),
+                            color = SiteColors.StatusExpired
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteConfirm = false }) {
+                        Text(text = stringResource(R.string.cancel_cta))
+                    }
+                }
+            )
+        }
+
+        zoomedPhotoModel?.let { model ->
+            Dialog(
+                onDismissRequest = { zoomedPhotoModel = null },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(SiteColors.TextPrimary)
+                ) {
+                    AsyncImage(
+                        model = model,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                    )
+                    IconButton(
+                        onClick = { zoomedPhotoModel = null },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(16.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = stringResource(R.string.photo_preview_close),
+                            tint = SiteColors.BgSurface
+                        )
+                    }
+                }
+            }
         }
 
         Column(
@@ -156,24 +241,62 @@ fun LogDetailScreen(
                         }
                     }
 
-                    log.notes?.takeIf { it.isNotBlank() }?.let { typedNote ->
+                    var isEditingNotes by remember(log.id) { mutableStateOf(false) }
+                    var draftNotes by remember(log.id, log.notes) { mutableStateOf(log.notes.orEmpty()) }
+
+                    if (isEditingNotes) {
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = typedNote,
-                            style = MaterialTheme.typography.bodyLarge
+                        OutlinedTextField(
+                            value = draftNotes,
+                            onValueChange = { draftNotes = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 3
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SecondaryOutdoorButton(
+                                text = stringResource(R.string.save_notes_cta),
+                                enabled = !state.isSaving,
+                                onClick = {
+                                    viewModel.updateNotes(draftNotes)
+                                    isEditingNotes = false
+                                }
+                            )
+                            SecondaryOutdoorButton(
+                                text = stringResource(R.string.cancel_cta),
+                                onClick = {
+                                    draftNotes = log.notes.orEmpty()
+                                    isEditingNotes = false
+                                }
+                            )
+                        }
+                    } else {
+                        log.notes?.takeIf { it.isNotBlank() }?.let { typedNote ->
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = typedNote,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SecondaryOutdoorButton(
+                            text = stringResource(R.string.edit_notes_cta),
+                            icon = Icons.Outlined.Edit,
+                            onClick = { isEditingNotes = true }
                         )
                     }
 
-                    // Audio playback if local file still exists (within 7-day window)
+                    // Audio playback for either local recording or signed remote URL
                     val localAudioFile = log.audioLocalPath?.let { File(it) }?.takeIf { it.exists() }
-                    if (localAudioFile != null || log.audioDurationMs != null) {
+                    val hasPlayableAudio = localAudioFile != null || !log.audioUrl.isNullOrBlank()
+                    if (hasPlayableAudio || log.audioDurationMs != null) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (localAudioFile != null) {
+                            if (hasPlayableAudio) {
                                 SecondaryOutdoorButton(
                                     text = if (state.isPlayingAudio) {
                                         stringResource(R.string.stop_audio)
@@ -217,6 +340,7 @@ fun LogDetailScreen(
                                             .size(140.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .border(1.dp, SiteColors.BorderLight, RoundedCornerShape(8.dp))
+                                            .clickable { zoomedPhotoModel = model }
                                     ) {
                                         AsyncImage(
                                             model = model,

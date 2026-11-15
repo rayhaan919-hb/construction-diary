@@ -11,9 +11,23 @@ export function getApiBaseUrl(): string {
 }
 
 export function isSessionCookieSecure(): boolean {
-  return process.env.SESSION_COOKIE_SECURE === "true";
+  if (process.env.SESSION_COOKIE_SECURE !== undefined) {
+    return process.env.SESSION_COOKIE_SECURE === "true";
+  }
+  return process.env.NODE_ENV === "production";
 }
 
 export function isDemoMode(): boolean {
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.ALLOW_DEMO_IN_PRODUCTION !== "true"
+  ) {
+    return false;
+  }
   return process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+}
+
+export function getEdgeJwtSecret(): string | null {
+  const secret = process.env.JWT_SECRET_KEY ?? process.env.JWT_SECRET ?? "";
+  return secret.trim().length > 0 ? secret.trim() : null;
 }

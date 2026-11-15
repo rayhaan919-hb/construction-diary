@@ -23,6 +23,8 @@ import com.sitediary.mobile.data.remote.dto.SiteLogPushDto
 import com.sitediary.mobile.data.remote.dto.SyncPullChangesDto
 import com.sitediary.mobile.data.remote.dto.SyncPushChangesDto
 import com.sitediary.mobile.data.remote.dto.SyncPushRequestDto
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.time.Clock
 import javax.inject.Inject
@@ -48,32 +50,40 @@ class SyncEngine @Inject constructor(
     private val clock: Clock,
     private val runInTransaction: suspend (suspend () -> Unit) -> Unit
 ) {
+    private val syncMutex = Mutex()
 
-    suspend fun syncAll(): SyncOutcome {
-        val currentUserId = currentUserIdProvider() ?: return SyncOutcome.NotAuthenticated
+    suspend fun syncAll(): SyncOutcome = syncMutex.withLock {
+        val currentUserId = currentUserIdProvider() ?: return@withLock SyncOutcome.NotAuthenticated
 
         val pushResult = pushPendingChanges()
         if (pushResult !is SyncOutcome.Success) {
-            return pushResult
+            return@withLock pushResult
         }
 
-        return pullAndBackfill(currentUserId)
+        pullAndBackfill(currentUserId)
     }
 
     suspend fun pushPendingChanges(): SyncOutcome {
         if (currentUserIdProvider() == null) return SyncOutcome.NotAuthenticated
 
+        val conflictedPermits = mutableSetOf<String>()
+        val conflictedLogs = mutableSetOf<String>()
+        val conflictedPhotos = mutableSetOf<String>()
+
         while (true) {
             val permits = permitDao.getDirtyBatch(MAX_PUSH_BATCH)
+                .filter { it.id !in conflictedPermits }
             val remainingAfterPermits = MAX_PUSH_BATCH - permits.size
             val siteLogs = if (remainingAfterPermits > 0) {
                 siteLogDao.getDirtyBatch(remainingAfterPermits)
+                    .filter { it.id !in conflictedLogs }
             } else {
                 emptyList()
             }
             val remainingAfterLogs = remainingAfterPermits - siteLogs.size
             val photos = if (remainingAfterLogs > 0) {
                 siteLogPhotoDao.getDirtyPushableBatch(remainingAfterLogs)
+                    .filter { it.id !in conflictedPhotos }
             } else {
                 emptyList()
             }
@@ -128,6 +138,13 @@ class SyncEngine @Inject constructor(
                                     pathsToDelete += permit.projectId to collectProjectFilePaths(permit.projectId)
                                     purgeProjectDbRows(permit.projectId)
                                 }
+                            } else if (result.status == "CONFLICT") {
+                                conflictedPermits += result.id
+                                permitDao.markSyncConflictIfSeqMatches(
+                                    id = result.id,
+                                    expectedSeq = expectedSeq,
+                                    error = formatConflictError(result.errorCode, result.errorDetail)
+                                )
                             } else {
                                 permitDao.markSyncRejectedIfSeqMatches(
                                     id = result.id,
@@ -151,6 +168,13 @@ class SyncEngine @Inject constructor(
                                     pathsToDelete += log.projectId to collectProjectFilePaths(log.projectId)
                                     purgeProjectDbRows(log.projectId)
                                 }
+                            } else if (result.status == "CONFLICT") {
+                                conflictedLogs += result.id
+                                siteLogDao.markSyncConflictIfSeqMatches(
+                                    id = result.id,
+                                    expectedSeq = expectedSeq,
+                                    error = formatConflictError(result.errorCode, result.errorDetail)
+                                )
                             } else {
                                 siteLogDao.markSyncRejectedIfSeqMatches(
                                     id = result.id,
@@ -167,6 +191,19 @@ class SyncEngine @Inject constructor(
                                     id = result.id,
                                     expectedSeq = expectedSeq,
                                     serverVersion = result.serverVersion ?: 0L
+                                )
+                            } else if (result.errorCode == "PROJECT_DELETED") {
+                                val photo = siteLogPhotoDao.getById(result.id)
+                                if (photo != null) {
+                                    pathsToDelete += photo.projectId to collectProjectFilePaths(photo.projectId)
+                                    purgeProjectDbRows(photo.projectId)
+                                }
+                            } else if (result.status == "CONFLICT") {
+                                conflictedPhotos += result.id
+                                siteLogPhotoDao.markSyncConflictIfSeqMatches(
+                                    id = result.id,
+                                    expectedSeq = expectedSeq,
+                                    error = formatConflictError(result.errorCode, result.errorDetail)
                                 )
                             } else {
                                 siteLogPhotoDao.markSyncRejectedIfSeqMatches(
@@ -192,7 +229,6 @@ class SyncEngine @Inject constructor(
 
     private suspend fun pullAndBackfill(currentUserId: String): SyncOutcome {
         var globalCursor = syncCursorDao.getCursor(GLOBAL_CURSOR_KEY) ?: 0L
-        val projectsToBackfill = linkedSetOf<String>()
         val purgedProjects = linkedSetOf<String>()
 
         while (true) {
@@ -210,22 +246,24 @@ class SyncEngine @Inject constructor(
                 ?: return SyncOutcome.RetryableError("Empty response body from sync pull")
 
             val filesToDelete = mutableListOf<Pair<String, List<String>>>()
+            var individualFilesToDelete: List<String> = emptyList()
 
             runInTransaction {
                 val previouslyKnownActiveProjects = projectMemberDao
                     .getActiveProjectIdsForUser(currentUserId)
                     .toSet()
+                val newProjectsToBackfill = linkedSetOf<String>()
 
                 for (member in page.changes.projectMembers) {
                     if (member.userId == currentUserId) {
                         if (member.deletedAt != null) {
                             purgedProjects += member.projectId
-                            projectsToBackfill.remove(member.projectId)
+                            newProjectsToBackfill.remove(member.projectId)
                         } else if (
                             member.projectId !in previouslyKnownActiveProjects &&
                             member.projectId !in purgedProjects
                         ) {
-                            projectsToBackfill += member.projectId
+                            newProjectsToBackfill += member.projectId
                         }
                     }
                 }
@@ -233,11 +271,21 @@ class SyncEngine @Inject constructor(
                 for (project in page.changes.projects) {
                     if (project.deletedAt != null) {
                         purgedProjects += project.id
-                        projectsToBackfill.remove(project.id)
+                        newProjectsToBackfill.remove(project.id)
                     }
                 }
 
-                applyChangesToRoom(page.changes, purgedProjects)
+                individualFilesToDelete = applyChangesToRoom(page.changes, purgedProjects)
+
+                for (projectId in newProjectsToBackfill) {
+                    syncCursorDao.upsert(
+                        SyncCursorEntity(
+                            scopeKey = backfillCursorKey(projectId),
+                            cursor = 1L,
+                            updatedAtEpochMs = clock.millis()
+                        )
+                    )
+                }
 
                 for (projectId in purgedProjects) {
                     val paths = collectProjectFilePaths(projectId)
@@ -259,6 +307,9 @@ class SyncEngine @Inject constructor(
             filesToDelete.forEach { (projectId, paths) ->
                 mediaFileManager.deleteProjectMedia(projectId, paths)
             }
+            individualFilesToDelete.forEach { path ->
+                mediaFileManager.deleteFileIfExists(path)
+            }
             purgedProjects.forEach { projectId ->
                 mediaFileManager.deleteProjectMedia(projectId)
             }
@@ -267,7 +318,12 @@ class SyncEngine @Inject constructor(
             if (!page.hasMore) break
         }
 
-        for (projectId in projectsToBackfill) {
+        // Resume all persisted pending project backfills (survives interruption/app restart)
+        val pendingBackfillIds = syncCursorDao
+            .getByPrefix(BACKFILL_PREFIX)
+            .map { it.scopeKey.removePrefix(BACKFILL_PREFIX) }
+            .distinct()
+        for (projectId in pendingBackfillIds) {
             if (projectId in purgedProjects) continue
             val backfillResult = backfillProject(projectId, currentUserId)
             if (backfillResult !is SyncOutcome.Success) {
@@ -298,6 +354,7 @@ class SyncEngine @Inject constructor(
 
             var projectTombstoned = false
             val filesToDelete = mutableListOf<String>()
+            var individualFilesToDelete: List<String> = emptyList()
 
             runInTransaction {
                 val hasSelfTombstone = page.changes.projectMembers.any {
@@ -311,7 +368,7 @@ class SyncEngine @Inject constructor(
                     filesToDelete += collectProjectFilePaths(projectId)
                     purgeProjectDbRows(projectId)
                 } else {
-                    applyChangesToRoom(page.changes, emptySet())
+                    individualFilesToDelete = applyChangesToRoom(page.changes, emptySet())
                     syncCursorDao.upsert(
                         SyncCursorEntity(
                             scopeKey = cursorKey,
@@ -319,12 +376,18 @@ class SyncEngine @Inject constructor(
                             updatedAtEpochMs = clock.millis()
                         )
                     )
+                    if (!page.hasMore) {
+                        syncCursorDao.deleteByScope(backfillCursorKey(projectId))
+                    }
                 }
             }
 
             if (projectTombstoned) {
                 mediaFileManager.deleteProjectMedia(projectId, filesToDelete)
                 return SyncOutcome.Success
+            }
+            individualFilesToDelete.forEach { path ->
+                mediaFileManager.deleteFileIfExists(path)
             }
 
             projectCursor = page.nextCursor
@@ -337,7 +400,8 @@ class SyncEngine @Inject constructor(
     private suspend fun applyChangesToRoom(
         changes: SyncPullChangesDto,
         purgedProjects: Set<String>
-    ) {
+    ): List<String> {
+        val deletedMediaFiles = mutableListOf<String>()
         val projects = changes.projects
             .filter { it.id !in purgedProjects }
             .map { it.toEntity() }
@@ -367,10 +431,16 @@ class SyncEngine @Inject constructor(
             if (dto.projectId in purgedProjects) continue
             val existing = permitDao.getById(dto.id)
             if (existing != null && existing.syncDirty) {
-                // Never clobber dirty local edits
+                // Never clobber dirty local edits; surface concurrent server update warning if newer
+                val conflictNote = if (dto.serverVersion > existing.serverVersion && existing.syncError == null) {
+                    "CONFLICT_PENDING: Server updated while local edits await push"
+                } else {
+                    existing.syncError
+                }
                 permitsToUpsert += existing.copy(
                     serverVersion = maxOf(existing.serverVersion, dto.serverVersion),
-                    documentPhotoUrl = dto.documentPhotoUrl ?: existing.documentPhotoUrl
+                    documentPhotoUrl = dto.documentPhotoUrl ?: existing.documentPhotoUrl,
+                    syncError = conflictNote
                 )
             } else {
                 permitsToUpsert += dto.toEntity(existing)
@@ -386,7 +456,13 @@ class SyncEngine @Inject constructor(
             val existing = siteLogDao.getById(dto.id)
             if (existing != null && existing.syncDirty) {
                 // Preserve client-owned fields while updating server-owned extraction metadata
+                val conflictNote = if (dto.serverVersion > existing.serverVersion && existing.syncError == null) {
+                    "CONFLICT_PENDING: Server updated while local edits await push"
+                } else {
+                    existing.syncError
+                }
                 logsToUpsert += existing.copy(
+                    audioUrl = dto.audioUrl ?: existing.audioUrl,
                     extractionStatus = dto.extractionStatus,
                     extractionAttempts = dto.extractionAttempts,
                     extractionError = dto.extractionError,
@@ -399,7 +475,8 @@ class SyncEngine @Inject constructor(
                     } else {
                         dto.structuredSummary
                     },
-                    serverVersion = maxOf(existing.serverVersion, dto.serverVersion)
+                    serverVersion = maxOf(existing.serverVersion, dto.serverVersion),
+                    syncError = conflictNote
                 )
             } else {
                 logsToUpsert += dto.toEntity(existing)
@@ -417,7 +494,10 @@ class SyncEngine @Inject constructor(
                 ?: continue
             if (resolvedProjectId in purgedProjects) continue
 
-            if (existing != null && existing.syncDirty) {
+            if (dto.deletedAt != null && (existing == null || !existing.syncDirty)) {
+                existing?.localPath?.let { deletedMediaFiles += it }
+                siteLogPhotoDao.deleteById(dto.id)
+            } else if (existing != null && existing.syncDirty) {
                 photosToUpsert += existing.copy(
                     remoteUrl = dto.url ?: existing.remoteUrl,
                     uploadStatus = dto.uploadStatus,
@@ -430,6 +510,7 @@ class SyncEngine @Inject constructor(
         if (photosToUpsert.isNotEmpty()) {
             siteLogPhotoDao.upsertAll(photosToUpsert)
         }
+        return deletedMediaFiles
     }
 
     private suspend fun collectProjectFilePaths(projectId: String): List<String> {
@@ -447,18 +528,26 @@ class SyncEngine @Inject constructor(
         projectMemberDao.deleteByProjectId(projectId)
         projectDao.deleteById(projectId)
         syncCursorDao.deleteByScope(projectCursorKey(projectId))
+        syncCursorDao.deleteByScope(backfillCursorKey(projectId))
     }
 
     private fun formatRejectionError(code: String?, detail: String?): String {
         return listOfNotNull(code, detail).joinToString(": ").ifBlank { "SYNC_REJECTED" }
     }
 
+    private fun formatConflictError(code: String?, detail: String?): String {
+        val reason = listOfNotNull(code, detail).joinToString(": ").ifBlank { "Server version is newer" }
+        return "CONFLICT_PENDING: $reason"
+    }
+
     companion object {
         const val MAX_PUSH_BATCH = 200
         const val PULL_LIMIT = 500
         const val GLOBAL_CURSOR_KEY = "global"
+        const val BACKFILL_PREFIX = "backfill:"
 
         fun projectCursorKey(projectId: String): String = "project:$projectId"
+        fun backfillCursorKey(projectId: String): String = "$BACKFILL_PREFIX$projectId"
     }
 }
 
@@ -553,6 +642,15 @@ private fun SiteLogDto.toEntity(existing: SiteLogEntity?): SiteLogEntity {
     } else {
         structuredSummary
     }
+    val preservedAudioUploadStatus = if (
+        existing?.audioUploadStatus == "UPLOADED" &&
+        existing.audioLocalPath != null &&
+        audioUploadStatus != "UPLOADED"
+    ) {
+        existing.audioUploadStatus
+    } else {
+        audioUploadStatus
+    }
     return SiteLogEntity(
         id = id,
         projectId = projectId,
@@ -562,8 +660,9 @@ private fun SiteLogDto.toEntity(existing: SiteLogEntity?): SiteLogEntity {
         recordedAt = recordedAt,
         notes = notes,
         audioUri = audioUri,
+        audioUrl = audioUrl ?: existing?.audioUrl,
         audioDurationMs = audioDurationMs,
-        audioUploadStatus = audioUploadStatus,
+        audioUploadStatus = preservedAudioUploadStatus,
         extractionStatus = extractionStatus,
         extractionAttempts = extractionAttempts,
         extractionError = extractionError,
@@ -590,12 +689,21 @@ private fun SiteLogPhotoDto.toEntity(
     projectId: String,
     existing: SiteLogPhotoEntity?
 ): SiteLogPhotoEntity {
+    val preservedUploadStatus = if (
+        existing?.uploadStatus == "UPLOADED" &&
+        existing.localPath != null &&
+        uploadStatus != "UPLOADED"
+    ) {
+        existing.uploadStatus
+    } else {
+        uploadStatus
+    }
     return SiteLogPhotoEntity(
         id = id,
         siteLogId = siteLogId,
         projectId = projectId,
         storageUri = storageUri,
-        uploadStatus = uploadStatus,
+        uploadStatus = preservedUploadStatus,
         remoteUrl = url ?: existing?.remoteUrl,
         width = width,
         height = height,

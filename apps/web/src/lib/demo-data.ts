@@ -1,21 +1,30 @@
 import { randomUUID } from "node:crypto";
 import { getTodayInTimezone } from "./format";
 import type {
+  AuditLogItem,
+  BillingCheckoutResponse,
   DailyReport,
   ExtractQueueResponse,
   InviteMemberResponse,
   Member,
+  Organization,
+  OrganizationInvitation,
+  OrganizationMember,
+  OrganizationUsage,
   Permit,
   PermitHealth,
   PermitInput,
   PermitPatch,
   PermitStatus,
+  PlanTier,
   Project,
   ProjectInput,
   ProjectPatch,
   ProjectSummary,
+  Role,
   SiteLog,
   TokenPair,
+  UploadTicket,
   User,
 } from "./types";
 
@@ -67,6 +76,10 @@ interface DemoStore {
   permits: DemoPermitRecord[];
   members: Member[];
   logs: SiteLog[];
+  organization: Organization;
+  orgMembers: OrganizationMember[];
+  invitations: OrganizationInvitation[];
+  auditLogs: AuditLogItem[];
   versionCounter: number;
 }
 
@@ -871,11 +884,120 @@ function buildInitialDemoStore(): DemoStore {
     },
   ];
 
+  const nowIso = new Date().toISOString();
+  const billingMonth = nowIso.slice(0, 7);
+  const organization: Organization = {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    name: "Siddiqui Builders & Developers",
+    slug: "siddiqui-builders",
+    status: "ACTIVE",
+    plan_tier: "PRO",
+    subscription_status: "ACTIVE",
+    billing_provider: "stripe",
+    trial_ends_at: null,
+    current_period_end: new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString(),
+    max_projects: 25,
+    max_seats: 50,
+    max_storage_bytes: 50 * 1024 * 1024 * 1024,
+    max_ai_extractions_monthly: 2000,
+    ai_extractions_this_month: 142,
+    storage_bytes_used: 384 * 1024 * 1024,
+    billing_month: billingMonth,
+    created_at: makeIsoTimestamp(y11, "08:00"),
+    updated_at: nowIso,
+  };
+
+  const orgMembers: OrganizationMember[] = [
+    {
+      organization_id: organization.id,
+      user_id: DEMO_USER_ID,
+      email: DEMO_USER.email,
+      full_name: DEMO_USER.full_name,
+      role: "OWNER",
+      status: "ACTIVE",
+      created_at: makeIsoTimestamp(y11, "08:00"),
+    },
+    {
+      organization_id: organization.id,
+      user_id: DEMO_SUPERVISOR_ONE_ID,
+      email: "tariq@sitediary.demo",
+      full_name: "Tariq Mahmood",
+      role: "SUPERVISOR",
+      status: "ACTIVE",
+      created_at: makeIsoTimestamp(y9, "09:00"),
+    },
+    {
+      organization_id: organization.id,
+      user_id: DEMO_SUPERVISOR_TWO_ID,
+      email: "bilal@sitediary.demo",
+      full_name: "Bilal Ahmed",
+      role: "SUPERVISOR",
+      status: "ACTIVE",
+      created_at: makeIsoTimestamp(y7, "10:00"),
+    },
+  ];
+
+  const invitations: OrganizationInvitation[] = [
+    {
+      id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+      organization_id: organization.id,
+      project_id: DEMO_PROJECT_ONE_ID,
+      email: "inspector.asad@sitediary.demo",
+      full_name: "Asadullah Khan",
+      role: "SUPERVISOR",
+      expires_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      accepted_at: null,
+      revoked_at: null,
+      created_at: makeIsoTimestamp(y1, "11:00"),
+      invite_token: "demo-invite-token-asad",
+    },
+  ];
+
+  const auditLogs: AuditLogItem[] = [
+    {
+      id: "cccccccc-cccc-4ccc-8ccc-ccccccccccc3",
+      sequence_num: 3,
+      actor_email: DEMO_USER.email,
+      action: "PROJECT_CREATED",
+      resource_type: "project",
+      resource_id: DEMO_PROJECT_ONE_ID,
+      ip_address: "127.0.0.1",
+      details: { name: "Margalla Heights Mixed-Use Tower" },
+      created_at: makeIsoTimestamp(y1, "14:10"),
+    },
+    {
+      id: "cccccccc-cccc-4ccc-8ccc-ccccccccccc2",
+      sequence_num: 2,
+      actor_email: DEMO_USER.email,
+      action: "INVITATION_CREATED",
+      resource_type: "invitation",
+      resource_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+      ip_address: "127.0.0.1",
+      details: { email: "inspector.asad@sitediary.demo", role: "SUPERVISOR" },
+      created_at: makeIsoTimestamp(y1, "11:00"),
+    },
+    {
+      id: "cccccccc-cccc-4ccc-8ccc-ccccccccccc1",
+      sequence_num: 1,
+      actor_email: DEMO_USER.email,
+      action: "ORGANIZATION_CREATED",
+      resource_type: "organization",
+      resource_id: organization.id,
+      ip_address: "127.0.0.1",
+      details: { plan_tier: "PRO" },
+      created_at: makeIsoTimestamp(y11, "08:00"),
+    },
+  ];
+
   return {
     projects,
     permits,
     members,
     logs,
+    organization,
+    orgMembers,
+    invitations,
+    auditLogs,
     versionCounter: 100,
   };
 }
@@ -1425,6 +1547,211 @@ export async function handleDemoBackendRequest(
       extraction_status: "DONE",
     };
     return jsonResponse(queued, 202);
+  }
+
+  const logMatch = /^\/v1\/logs\/([^/]+)$/.exec(pathname);
+  if (logMatch?.[1]) {
+    const logId = logMatch[1];
+    const log = store.logs.find((l) => l.id === logId && l.deleted_at === null);
+    if (!log) {
+      return problemResponse(404, "NOT_FOUND", "Not found", "Site log not found");
+    }
+    if (method === "PATCH") {
+      const body = (await parseJsonBody<{ notes?: string }>(init)) ?? {};
+      if (typeof body.notes === "string") {
+        store.versionCounter += 1;
+        log.notes = body.notes;
+        log.edited_by_human = true;
+        log.updated_at = new Date().toISOString();
+        log.server_version = store.versionCounter;
+      }
+      return jsonResponse(log);
+    }
+    if (method === "DELETE") {
+      store.versionCounter += 1;
+      log.deleted_at = new Date().toISOString();
+      log.server_version = store.versionCounter;
+      return new Response(null, { status: 204 });
+    }
+  }
+
+  if (pathname === "/v1/media/upload-url" && method === "POST") {
+    const ticket: UploadTicket = {
+      ticket_id: `demo-ticket-${randomUUID()}`,
+      upload_url: "data:text/plain;base64,ZGVtbw==",
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      storage_uri: `demo://uploads/${randomUUID()}`,
+      expires_at: new Date(Date.now() + 900 * 1000).toISOString(),
+    };
+    return jsonResponse(ticket);
+  }
+
+  if (pathname === "/v1/media/complete" && method === "POST") {
+    return jsonResponse({ status: "ok", upload_status: "UPLOADED" });
+  }
+
+  if (pathname === "/v1/organization") {
+    if (method === "GET") {
+      return jsonResponse(store.organization);
+    }
+    if (method === "PATCH") {
+      const body = (await parseJsonBody<{ name?: string; slug?: string }>(init)) ?? {};
+      if (typeof body.name === "string" && body.name.trim()) {
+        store.organization.name = body.name.trim();
+      }
+      if (typeof body.slug === "string" && body.slug.trim()) {
+        store.organization.slug = body.slug.trim().toLowerCase();
+      }
+      store.organization.updated_at = new Date().toISOString();
+      return jsonResponse(store.organization);
+    }
+  }
+
+  if (pathname === "/v1/organization/usage" && method === "GET") {
+    const usage: OrganizationUsage = {
+      organization_id: store.organization.id,
+      active_projects: store.projects.filter((p) => p.deleted_at === null).length,
+      max_projects: store.organization.max_projects,
+      active_seats: store.orgMembers.filter((m) => m.status === "ACTIVE").length,
+      max_seats: store.organization.max_seats,
+      storage_bytes_used: store.organization.storage_bytes_used,
+      max_storage_bytes: store.organization.max_storage_bytes,
+      ai_extractions_this_month: store.organization.ai_extractions_this_month,
+      max_ai_extractions_monthly: store.organization.max_ai_extractions_monthly,
+    };
+    return jsonResponse(usage);
+  }
+
+  if (pathname === "/v1/organization/members" && method === "GET") {
+    return jsonResponse(store.orgMembers);
+  }
+
+  const orgMemberMatch = /^\/v1\/organization\/members\/([^/]+)$/.exec(pathname);
+  if (orgMemberMatch?.[1]) {
+    const userId = orgMemberMatch[1];
+    const member = store.orgMembers.find((m) => m.user_id === userId);
+    if (!member) {
+      return problemResponse(404, "NOT_FOUND", "Not found", "Member not found");
+    }
+    if (method === "PATCH") {
+      const body = await parseJsonBody<{ role?: Role }>(init);
+      if (body?.role === "OWNER" || body?.role === "SUPERVISOR") {
+        member.role = body.role;
+      }
+      return jsonResponse(member);
+    }
+    if (method === "DELETE") {
+      store.orgMembers = store.orgMembers.filter((m) => m.user_id !== userId);
+      return new Response(null, { status: 204 });
+    }
+  }
+
+  if (pathname === "/v1/organization/invitations") {
+    if (method === "GET") {
+      return jsonResponse(store.invitations);
+    }
+    if (method === "POST") {
+      const body = await parseJsonBody<{
+        email?: string;
+        full_name?: string;
+        role?: Role;
+        project_id?: string | null;
+      }>(init);
+      if (!body?.email?.trim() || !body.full_name?.trim()) {
+        return problemResponse(422, "VALIDATION", "Validation failed", "email and full_name are required.");
+      }
+      const inv: OrganizationInvitation = {
+        id: randomUUID(),
+        organization_id: store.organization.id,
+        project_id: body.project_id ?? null,
+        email: body.email.trim(),
+        full_name: body.full_name.trim(),
+        role: body.role === "OWNER" ? "OWNER" : "SUPERVISOR",
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        accepted_at: null,
+        revoked_at: null,
+        created_at: new Date().toISOString(),
+        invite_token: `demo-inv-${randomUUID().slice(0, 8)}`,
+      };
+      store.invitations.unshift(inv);
+      return jsonResponse(inv, 201);
+    }
+  }
+
+  const orgInviteMatch = /^\/v1\/organization\/invitations\/([^/]+)$/.exec(pathname);
+  if (orgInviteMatch?.[1] && method === "DELETE") {
+    const inviteId = orgInviteMatch[1];
+    const inv = store.invitations.find((i) => i.id === inviteId);
+    if (!inv) {
+      return problemResponse(404, "NOT_FOUND", "Not found", "Invitation not found");
+    }
+    inv.revoked_at = new Date().toISOString();
+    return new Response(null, { status: 204 });
+  }
+
+  if (pathname === "/v1/organization/subscription" && method === "POST") {
+    const body = await parseJsonBody<{ plan_tier?: PlanTier }>(init);
+    if (body?.plan_tier) {
+      store.organization.plan_tier = body.plan_tier;
+      store.organization.max_projects =
+        body.plan_tier === "ENTERPRISE" ? 1000 : body.plan_tier === "PRO" ? 25 : 3;
+      store.organization.max_seats =
+        body.plan_tier === "ENTERPRISE" ? 500 : body.plan_tier === "PRO" ? 50 : 5;
+      store.organization.updated_at = new Date().toISOString();
+    }
+    return jsonResponse(store.organization);
+  }
+
+  if (pathname === "/v1/billing/checkout" && method === "POST") {
+    const checkout: BillingCheckoutResponse = {
+      provider: "stripe",
+      configured: false,
+      checkout_url: null,
+      message: "Demo mode: billing checkout preview active (Stripe disabled in offline demo).",
+    };
+    return jsonResponse(checkout);
+  }
+
+  if (pathname === "/v1/organization/suspend" && method === "POST") {
+    store.organization.status = "SUSPENDED";
+    store.organization.updated_at = new Date().toISOString();
+    return jsonResponse(store.organization);
+  }
+
+  if (pathname === "/v1/organization/unsuspend" && method === "POST") {
+    store.organization.status = "ACTIVE";
+    store.organization.updated_at = new Date().toISOString();
+    return jsonResponse(store.organization);
+  }
+
+  if (pathname === "/v1/organization/delete" && method === "POST") {
+    const body = await parseJsonBody<{ confirm_slug?: string }>(init);
+    if (body?.confirm_slug !== store.organization.slug) {
+      return problemResponse(422, "SLUG_MISMATCH", "Validation failed", "Confirmation slug does not match.");
+    }
+    return jsonResponse({ accepted: true, status: "PENDING_DELETION" }, 202);
+  }
+
+  if (pathname === "/v1/organization/export" && method === "GET") {
+    return jsonResponse({
+      exported_at: new Date().toISOString(),
+      organization: store.organization,
+      projects: store.projects.filter((p) => p.deleted_at === null),
+      permits: store.permits.filter((p) => p.deleted_at === null),
+      members: store.orgMembers,
+    });
+  }
+
+  if (pathname === "/v1/organization/audit-logs" && method === "GET") {
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? "25") || 25, 100);
+    const offset = Math.max(Number(url.searchParams.get("offset") ?? "0") || 0, 0);
+    return jsonResponse({
+      items: store.auditLogs.slice(offset, offset + limit),
+      total: store.auditLogs.length,
+      limit,
+      offset,
+    });
   }
 
   return problemResponse(

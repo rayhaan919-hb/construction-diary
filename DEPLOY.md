@@ -1,86 +1,108 @@
-# Deployment Runbook (GCP Cloud Run + Cloud SQL + GCS + Cloud Scheduler)
+# Deployment Runbook (Docker, GCP Cloud Run, Cloud SQL, GCS & CI/CD)
 
-This MVP was verified locally without provisioning cloud resources. Follow this runbook to deploy to Google Cloud Platform.
+Follow this runbook to run Construction Diary locally via Docker Compose or deploy the hardened production stack to Google Cloud Platform.
 
-## 1. Prerequisites
-- GCP project with billing enabled (`PROJECT_ID=...`, `REGION=us-central1`).
-- Enable APIs:
-  ```bash
-  gcloud services enable \
-    run.googleapis.com \
-    sqladmin.googleapis.com \
-    storage.googleapis.com \
-    cloudscheduler.googleapis.com \
-    aiplatform.googleapis.com \
-    secretmanager.googleapis.com \
-    artifactregistry.googleapis.com
-  ```
+---
 
-## 2. Cloud SQL (PostgreSQL 16)
+## 1. Automated GCP Scripts (`infra/scripts/`)
+
+The repository includes parameterized deployment and disaster-recovery scripts under `infra/scripts/`:
+
+- [`infra/scripts/setup-gcp.sh`](infra/scripts/setup-gcp.sh) — Enables required GCP APIs, creates Artifact Registry, provisions least-privilege service accounts, creates Cloud SQL PostgreSQL 16 (with PITR and automated backups), creates private GCS media/backup buckets with versioning & CORS, creates Secret Manager entries, and creates the Cloud Tasks extraction queue.
+- [`infra/scripts/deploy-gcp.sh`](infra/scripts/deploy-gcp.sh) — Builds and pushes container images for `services/api` and `apps/web`, runs `alembic upgrade head` via a Cloud Run Job, deploys Cloud Run services with Secret Manager mounts, updates Cloud Scheduler job images, and runs `/readyz` + `/api/health` readiness smoke checks.
+- [`infra/scripts/backup-db.sh`](infra/scripts/backup-db.sh) — Triggers an on-demand Cloud SQL physical backup plus an exported compressed SQL snapshot in `gs://${PROJECT_ID}-site-diary-backups`.
+- [`infra/scripts/restore-db.sh`](infra/scripts/restore-db.sh) — Restores a Cloud SQL backup or SQL snapshot onto a target instance (dry-run by default; requires `CONFIRM_RESTORE=yes`).
+- [`infra/scripts/verify-backup-restore.sh`](infra/scripts/verify-backup-restore.sh) — Runs a non-destructive local/CI `pg_dump` + `pg_restore` verification into an ephemeral database and asserts Alembic revision and core row counts match.
+
 ```bash
-gcloud sql instances create site-diary-pg \
-  --database-version=POSTGRES_16 \
-  --tier=db-f1-micro \
-  --region=$REGION
-gcloud sql databases create site_diary --instance=site-diary-pg
+export PROJECT_ID="your-gcp-project"
+export REGION="us-central1"
+
+chmod +x infra/scripts/*.sh
+./infra/scripts/setup-gcp.sh
+# Populate database URL in Secret Manager:
+echo -n "postgresql://appuser:<STRONG_PASSWORD>@/site_diary?host=/cloudsql/${PROJECT_ID}:${REGION}:site-diary-pg" \
+  | gcloud secrets versions add site-diary-database-url --data-file=- --project="${PROJECT_ID}"
+
+./infra/scripts/deploy-gcp.sh
 ```
-Run Alembic migrations against Cloud SQL (via Cloud SQL Auth Proxy):
+
+---
+
+## 2. Production Secrets & Configuration Fail-Closed Policy
+
+When `ENV=staging` or `ENV=production`, the FastAPI backend calls `validate_runtime_configuration()` at startup and **refuses to boot** if any of the following are missing or insecure:
+- `JWT_SECRET` and `MEDIA_URL_SIGNING_SECRET` must each be >= 32 characters, distinct from each other, and free of known placeholder strings.
+- `ENABLE_DEV_SEED` must be `false` and `SEED_*_PASSWORD` variables must remain unset.
+- `CORS_ORIGINS` must list explicit `https://` origins (wildcard `*` is rejected).
+- In `ENV=production`, `USE_MOCK_GEMINI=false`, `STORAGE_BACKEND=gcs`, non-empty `GCS_BUCKET`, HTTPS `PUBLIC_API_BASE_URL`, and non-default `DATABASE_URL` credentials are mandatory.
+
+Values prefixed with `sm://` or resolved via `GCP_SECRET_MANAGER_ENABLED=true` are automatically fetched from Google Secret Manager using Application Default Credentials (`services/api/app/core/secrets.py`).
+
+---
+
+## 3. GitHub Actions CI/CD & Workload Identity Federation (WIF)
+
+- **Continuous Integration** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): Runs `apps/web` (`typecheck`, `lint`, `test`, `build`), `services/api` (`ruff check`, `mypy`, `pytest -q` backed by Postgres 16), and `apps/mobile` (`./gradlew testDebugUnitTest lintDebug`).
+- **Continuous Delivery** ([`.github/workflows/cd.yml`](.github/workflows/cd.yml)): Triggered on `v*` tags or manual `workflow_dispatch` into `staging` / `production`. Builds container images for API and Web, and when `deploy_services=true` is selected, authenticates via keyless Workload Identity Federation and invokes `./infra/scripts/deploy-gcp.sh`.
+
+Configure the following GitHub Environment variables per target environment (`staging`, `production`):
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
+- `GCP_DEPLOY_SERVICE_ACCOUNT`
+
+---
+
+## 4. Cloud SQL & Backup / Restore Verification Drill
+
+Automated daily backups + 7-day point-in-time recovery (PITR) are enabled by `setup-gcp.sh`. Perform quarterly restore drills:
+
 ```bash
-cd services/api
-DATABASE_URL="postgresql://postgres:<PASSWORD>@127.0.0.1:5432/site_diary" uv run alembic upgrade head
+# Cloud SQL restore into a staging validation instance
+CONFIRM_RESTORE=yes TARGET_INSTANCE=site-diary-pg-restore BACKUP_ID=<id> \
+  PROJECT_ID="${PROJECT_ID}" ./infra/scripts/restore-db.sh
+
+# Local / CI logical backup-restore integrity verification
+DATABASE_URL="postgresql://postgres:<PASSWORD>@127.0.0.1:5432/site_diary" \
+  ./infra/scripts/verify-backup-restore.sh
 ```
 
-## 3. GCS Bucket & IAM
-Create a private bucket for site audio, site photos, and permit documents:
-```bash
-gcloud storage buckets create gs://${PROJECT_ID}-site-diary-media --location=$REGION --uniform-bucket-level-access
-```
-Configure CORS on the bucket if web browsers ever PUT directly; mobile uses native OkHttp PUTs.
-Grant the API service account:
-- `roles/storage.objectAdmin` on the media bucket
-- `roles/iam.serviceAccountTokenCreator` on itself (required for V4 signed URLs on Cloud Run)
-- `roles/aiplatform.user` (for Vertex AI Gemini multimodal extraction)
-- `roles/cloudsql.client`
+---
 
-## 4. Secrets
-Store `JWT_SECRET` and `MEDIA_URL_SIGNING_SECRET` in Secret Manager and mount them as environment variables on Cloud Run.
+## 5. Daily Permit Expiry Scheduler (Cloud Run Job + Cloud Scheduler)
 
-## 5. Deploy API (`services/api`)
-```bash
-gcloud run deploy site-diary-api \
-  --source=./services/api \
-  --region=$REGION \
-  --add-cloudsql-instances=${PROJECT_ID}:${REGION}:site-diary-pg \
-  --set-env-vars="STORAGE_BACKEND=gcs,GCS_BUCKET=${PROJECT_ID}-site-diary-media,USE_MOCK_GEMINI=false,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION},GEMINI_MODEL=gemini-2.5-flash,NOTIFIER=email,fcm" \
-  --allow-unauthenticated
-```
-Note: In production with Cloud Run scale-to-zero, prefer `min-instances=1` (or Cloud Tasks) so in-process `BackgroundTasks` extraction jobs complete cleanly.
+Schedule the `site-diary-permit-alerts` Cloud Run Job daily at 07:00 `Asia/Karachi`:
 
-## 6. Deploy Web (`apps/web`)
-```bash
-gcloud run deploy site-diary-web \
-  --source=./apps/web \
-  --region=$REGION \
-  --set-env-vars="API_BASE_URL=https://<api-cloud-run-url>,SESSION_COOKIE_SECURE=true" \
-  --allow-unauthenticated
-```
-
-## 7. Daily Permit Expiry Cron (Cloud Run Job + Cloud Scheduler)
-Create a Cloud Run Job using the API container image running:
-```text
-python -m app.jobs.permit_alerts
-```
-Schedule it daily (e.g. `0 7 * * *` `Asia/Karachi`):
 ```bash
 gcloud scheduler jobs create http permit-alerts-daily \
-  --location=$REGION \
+  --location="${REGION}" \
   --schedule="0 7 * * *" \
   --time-zone="Asia/Karachi" \
   --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/site-diary-permit-alerts:run" \
   --http-method=POST \
-  --oauth-service-account-email=<scheduler-sa>@${PROJECT_ID}.iam.gserviceaccount.com
+  --oauth-service-account-email="site-diary-scheduler-sa@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --project="${PROJECT_ID}"
 ```
 
-## 8. Mobile (`apps/mobile`)
+---
+
+## 6. Local Docker Compose Deployment
+
+```bash
+cp .env.example .env
+# Edit .env and supply strong secrets / Postgres credentials
+docker compose up --build -d
+```
+
+- PostgreSQL binds exclusively to `127.0.0.1:5432`
+- FastAPI API exposes `/healthz` and `/readyz` on `127.0.0.1:8000`
+- Next.js Web BFF exposes `/api/health` on `127.0.0.1:3000` (with Web only starting once API passes `/readyz`)
+
+---
+
+## 7. Mobile (`apps/mobile`) & Firebase FCM Setup
+
 1. Place Firebase `google-services.json` in `apps/mobile/app/google-services.json` to enable FCM push alerts (`apps/mobile/app/build.gradle.kts` conditionally applies `com.google.gms.google-services` only when that file exists). If `google-services.json` is omitted (e.g., local evaluation or CI builds), the app compiles and runs cleanly while `FcmTokenManager` logs a warning and skips FCM registration.
-2. Configure release `API_BASE_URL` pointing to the Cloud Run API URL.
+2. Provide the backend FCM project ID (`FCM_PROJECT_ID`) and service account credentials (`GOOGLE_APPLICATION_CREDENTIALS` or attached runtime SA) when `NOTIFIER=fcm` is enabled in production.
+3. Configure release `API_BASE_URL` in Gradle / CI build properties pointing exclusively to your HTTPS Cloud Run API URL (cleartext HTTP is disabled in Android release network security config).

@@ -1,11 +1,18 @@
 "use client";
 
 import React, { Suspense, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, HardHat, Lock, Mail } from "lucide-react";
 
 function sanitizeNextPath(raw: string | null): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {
+  if (
+    !raw ||
+    !raw.startsWith("/") ||
+    raw.startsWith("//") ||
+    raw.startsWith("/\\") ||
+    raw.includes("\\")
+  ) {
     return "/";
   }
   return raw;
@@ -151,6 +158,21 @@ function LoginForm() {
               {submitting ? "Signing in..." : "Sign in to Portal"}
             </button>
           </form>
+
+          <div className="flex items-center justify-between text-xs">
+            <Link
+              href="/forgot-password"
+              className="font-medium text-[#475569] hover:text-[#D97706]"
+            >
+              Forgot password?
+            </Link>
+            <Link
+              href="/register"
+              className="font-semibold text-[#D97706] hover:text-[#B45309]"
+            >
+              Create company account
+            </Link>
+          </div>
 
           <p className="border-t border-[#E2E8F0] pt-4 text-xs text-[#64748B]">
             Session tokens are stored in httpOnly cookies. Supervisors use the Android field app for offline capture.

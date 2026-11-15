@@ -10,7 +10,22 @@ export const dynamic = "force-dynamic";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function isValidCalendarDate(dateStr: string): boolean {
+  const m = DATE_RE.exec(dateStr);
+  if (!m) return false;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return (
+    dt.getUTCFullYear() === year &&
+    dt.getUTCMonth() === month - 1 &&
+    dt.getUTCDate() === day
+  );
+}
 
 function slugifyFilename(input: string): string {
   return (
@@ -28,14 +43,14 @@ export async function GET(
 ) {
   const { projectId, date } = await context.params;
 
-  if (!UUID_RE.test(projectId) || !DATE_RE.test(date)) {
+  if (!UUID_RE.test(projectId) || !isValidCalendarDate(date)) {
     return NextResponse.json(
       {
         type: "about:blank",
         title: "Invalid report parameters",
         status: 400,
         code: "VALIDATION",
-        detail: "projectId must be a UUID and date must be YYYY-MM-DD",
+        detail: "projectId must be a UUID and date must be a valid YYYY-MM-DD calendar date",
       },
       { status: 400 }
     );
@@ -65,7 +80,6 @@ export async function GET(
 
   const project = (await projectOutcome.response.json()) as Project;
 
-  // Reuse any rotated access token across subsequent fetches in this request
   const tokenAfterProject = projectOutcome.refreshedTokens?.access_token;
   const reportOutcome = await fetchBackendWithAuth(
     req,
@@ -73,7 +87,7 @@ export async function GET(
     {},
     tokenAfterProject
   );
-  const latestTokens =
+  let latestTokens =
     reportOutcome.refreshedTokens ?? projectOutcome.refreshedTokens;
 
   if (!reportOutcome.response.ok) {
@@ -104,6 +118,7 @@ export async function GET(
       {},
       latestTokens?.access_token
     );
+    latestTokens = permitsOutcome.refreshedTokens ?? latestTokens;
     if (permitsOutcome.response.ok) {
       permits = (await permitsOutcome.response.json()) as Permit[];
     }

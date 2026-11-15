@@ -78,6 +78,16 @@ interface PermitDao {
     @Query(
         """
         UPDATE permits
+        SET sync_dirty = 1,
+            sync_error = CASE WHEN local_mutation_seq = :expectedSeq THEN :error ELSE sync_error END
+        WHERE id = :id
+        """
+    )
+    suspend fun markSyncConflictIfSeqMatches(id: String, expectedSeq: Long, error: String)
+
+    @Query(
+        """
+        UPDATE permits
         SET document_photo_uri = :storageUri,
             sync_dirty = 1,
             local_mutation_seq = local_mutation_seq + 1

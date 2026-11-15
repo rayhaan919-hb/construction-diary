@@ -1,6 +1,10 @@
+import net from "node:net";
 import sharp from "sharp";
 import { getApiBaseUrl } from "@/lib/config";
 import type { SiteLog } from "@/lib/types";
+
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+const CONCURRENCY_LIMIT = 4;
 
 /**
  * Rewrites localhost signed media URLs to API_BASE_URL when running inside
@@ -21,6 +25,59 @@ export function resolveServerMediaUrl(signedUrl: string): string {
   }
 }
 
+function isPrivateOrDisallowedIp(ip: string): boolean {
+  if (net.isIPv4(ip)) {
+    const parts = ip.split(".").map(Number);
+    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return true;
+    const [a, b] = parts;
+    if (a === undefined || b === undefined) return true;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true; // Cloud metadata / link-local
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    return false;
+  }
+  if (net.isIPv6(ip)) {
+    const lower = ip.toLowerCase();
+    if (lower === "::" || lower === "::1") return true;
+    if (lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd")) {
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+export function isSafeMediaFetchUrl(resolvedUrl: string): boolean {
+  try {
+    const url = new URL(resolvedUrl);
+    const apiBase = new URL(getApiBaseUrl());
+    // Allow internal calls explicitly targeting our configured API_BASE_URL /v1/media/*
+    if (url.origin === apiBase.origin && url.pathname.startsWith("/v1/media/")) {
+      return true;
+    }
+    if (url.protocol !== "https:") {
+      return false;
+    }
+    const host = url.hostname.toLowerCase();
+    if (
+      host === "localhost" ||
+      host.endsWith(".local") ||
+      host.endsWith(".internal") ||
+      host === "metadata.google.internal"
+    ) {
+      return false;
+    }
+    if (net.isIP(host) && isPrivateOrDisallowedIp(host)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/=]+)$/i;
 
 async function fetchAndCompressPhoto(signedUrl: string): Promise<string | null> {
@@ -34,14 +91,22 @@ async function fetchAndCompressPhoto(signedUrl: string): Promise<string | null> 
       raw = Buffer.from(dataMatch[1], "base64");
     } else {
       const serverUrl = resolveServerMediaUrl(signedUrl);
+      if (!isSafeMediaFetchUrl(serverUrl)) {
+        return null;
+      }
       const res = await fetch(serverUrl, {
         signal: controller.signal,
         cache: "no-store",
+        redirect: "error",
       });
       if (!res.ok) return null;
+      const contentLenHeader = res.headers.get("content-length");
+      if (contentLenHeader && Number(contentLenHeader) > MAX_PHOTO_BYTES) {
+        return null;
+      }
       raw = Buffer.from(await res.arrayBuffer());
     }
-    if (raw.byteLength === 0) return null;
+    if (raw.byteLength === 0 || raw.byteLength > MAX_PHOTO_BYTES) return null;
 
     const compressed = await sharp(raw)
       .rotate()
@@ -59,7 +124,7 @@ async function fetchAndCompressPhoto(signedUrl: string): Promise<string | null> 
 
 /**
  * Fetches and compresses thumbnails for all uploaded photos in a day's logs.
- * Unavailable or invalid photos are gracefully skipped so PDF export always succeeds.
+ * Bounded concurrency avoids saturating sharp workers or socket pools.
  */
 export async function fetchCompressedLogPhotos(
   logs: SiteLog[]
@@ -74,17 +139,23 @@ export async function fetchCompressedLogPhotos(
   }
 
   const results = new Map<string, string>();
-  const settled = await Promise.all(
-    jobs.map(async ({ photoId, url }) => {
-      const dataUri = await fetchAndCompressPhoto(url);
-      return { photoId, dataUri };
-    })
-  );
+  let nextIdx = 0;
 
-  for (const item of settled) {
-    if (item.dataUri) {
-      results.set(item.photoId, item.dataUri);
+  async function worker(): Promise<void> {
+    while (nextIdx < jobs.length) {
+      const current = jobs[nextIdx++];
+      if (!current) continue;
+      const dataUri = await fetchAndCompressPhoto(current.url);
+      if (dataUri) {
+        results.set(current.photoId, dataUri);
+      }
     }
   }
+
+  const workers = Array.from(
+    { length: Math.min(CONCURRENCY_LIMIT, jobs.length) },
+    () => worker()
+  );
+  await Promise.all(workers);
   return results;
 }

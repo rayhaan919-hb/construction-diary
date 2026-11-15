@@ -353,8 +353,8 @@ function LogBreakdownItem({
     .filter((p): p is { id: string; uri: string } => Boolean(p.uri));
 
   return (
-    <View style={styles.logCard} wrap={false}>
-      <View style={styles.logHeader}>
+    <View style={styles.logCard}>
+      <View style={styles.logHeader} wrap={false}>
         <View style={styles.logMetaLeft}>
           <Text style={styles.monoPill}>{timeStr}</Text>
           <Text style={styles.authorText}>

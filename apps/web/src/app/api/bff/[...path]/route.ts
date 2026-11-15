@@ -1,12 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearAuthCookies, setAuthCookies } from "@/lib/auth-cookies";
 import { validateBffPath } from "@/lib/bff-path";
+import { verifySameOriginRequest } from "@/lib/csrf";
 import { fetchBackendWithAuth } from "@/lib/server-api";
+
+const MAX_BFF_BODY_BYTES = 1024 * 1024; // 1 MB
 
 async function handleProxy(
   req: NextRequest,
   context: { params: Promise<{ path: string[] }> }
 ) {
+  if (!verifySameOriginRequest(req)) {
+    return NextResponse.json(
+      {
+        type: "about:blank",
+        title: "Cross-origin request forbidden",
+        status: 403,
+        code: "CSRF_FORBIDDEN",
+        detail: "Cross-origin mutating requests are not allowed.",
+      },
+      { status: 403 }
+    );
+  }
+
   const { path } = await context.params;
   const safePath = validateBffPath(path);
   if (!safePath) {
@@ -16,7 +32,7 @@ async function handleProxy(
         title: "Invalid proxy path",
         status: 400,
         code: "INVALID_PATH",
-        detail: "Path must target /v1/*",
+        detail: "Path must target an allowed /v1/* endpoint",
       },
       { status: 400 }
     );
@@ -33,7 +49,32 @@ async function handleProxy(
 
   let body: ArrayBuffer | undefined;
   if (req.method !== "GET" && req.method !== "HEAD") {
+    const contentLength = req.headers.get("content-length");
+    if (contentLength && Number(contentLength) > MAX_BFF_BODY_BYTES) {
+      return NextResponse.json(
+        {
+          type: "about:blank",
+          title: "Payload too large",
+          status: 413,
+          code: "PAYLOAD_TOO_LARGE",
+          detail: "Request body exceeds 1 MB limit.",
+        },
+        { status: 413 }
+      );
+    }
     const buf = await req.arrayBuffer();
+    if (buf.byteLength > MAX_BFF_BODY_BYTES) {
+      return NextResponse.json(
+        {
+          type: "about:blank",
+          title: "Payload too large",
+          status: 413,
+          code: "PAYLOAD_TOO_LARGE",
+          detail: "Request body exceeds 1 MB limit.",
+        },
+        { status: 413 }
+      );
+    }
     if (buf.byteLength > 0) {
       body = buf;
     }
@@ -56,6 +97,10 @@ async function handleProxy(
     const upstreamType = upstream.headers.get("content-type");
     if (upstreamType) {
       respHeaders.set("Content-Type", upstreamType);
+    }
+    const contentDisposition = upstream.headers.get("content-disposition");
+    if (contentDisposition) {
+      respHeaders.set("Content-Disposition", contentDisposition);
     }
     res = new NextResponse(respBytes, {
       status: upstream.status,

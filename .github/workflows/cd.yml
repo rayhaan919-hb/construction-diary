@@ -1,0 +1,92 @@
+name: CD Release & Deploy
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target deployment environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+      deploy_services:
+        description: "Deploy containers to Google Cloud Run (requires GCP WIF variables)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: cd-${{ github.event.inputs.environment || 'release' }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  build-containers:
+    name: Build Container Images
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/api
+          push: false
+          load: true
+          tags: site-diary-api:${{ github.sha }}
+
+      - name: Build Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/web
+          push: false
+          load: true
+          tags: site-diary-web:${{ github.sha }}
+
+  deploy-gcp:
+    name: Deploy to Google Cloud Run
+    needs: build-containers
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_services == 'true' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Deploy API and Web via script
+        env:
+          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ vars.GCP_REGION }}
+          IMAGE_TAG: ${{ github.sha }}
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: |
+          chmod +x infra/scripts/*.sh
+          ./infra/scripts/deploy-gcp.sh

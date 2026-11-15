@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -180,27 +181,39 @@ fun RecordNoteScreen(
                         onClick = viewModel::stopRecording
                     )
                 } else if (state.recordedFile != null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         SecondaryOutdoorButton(
-                            text = stringResource(R.string.rerecord_audio),
-                            icon = Icons.Outlined.Mic,
-                            modifier = Modifier.weight(1f),
-                            onClick = {
-                                if (hasAudioPermission) {
-                                    viewModel.startRecording()
-                                } else {
-                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            text = if (state.isPlayingPreview) {
+                                stringResource(R.string.stop_preview_cta)
+                            } else {
+                                stringResource(R.string.preview_recording_cta)
+                            },
+                            icon = if (state.isPlayingPreview) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = viewModel::togglePreviewPlayback
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            SecondaryOutdoorButton(
+                                text = stringResource(R.string.rerecord_audio),
+                                icon = Icons.Outlined.Mic,
+                                modifier = Modifier.weight(1f),
+                                onClick = {
+                                    if (hasAudioPermission) {
+                                        viewModel.startRecording()
+                                    } else {
+                                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
                                 }
-                            }
-                        )
-                        SecondaryOutdoorButton(
-                            text = stringResource(R.string.delete_audio),
-                            icon = Icons.Outlined.Delete,
-                            onClick = viewModel::deleteRecording
-                        )
+                            )
+                            SecondaryOutdoorButton(
+                                text = stringResource(R.string.delete_audio),
+                                icon = Icons.Outlined.Delete,
+                                onClick = viewModel::deleteRecording
+                            )
+                        }
                     }
                 } else {
                     PrimaryOutdoorButton(

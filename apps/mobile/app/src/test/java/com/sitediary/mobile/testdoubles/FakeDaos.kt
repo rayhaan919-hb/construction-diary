@@ -136,6 +136,13 @@ class FakePermitDao : PermitDao {
         }
     }
 
+    override suspend fun markSyncConflictIfSeqMatches(id: String, expectedSeq: Long, error: String) {
+        val current = store.value[id] ?: return
+        if (current.localMutationSeq == expectedSeq) {
+            upsert(current.copy(syncDirty = true, syncError = error))
+        }
+    }
+
     override suspend fun setDocumentStorageUriAndMarkDirty(id: String, storageUri: String) {
         val current = store.value[id] ?: return
         upsert(
@@ -249,6 +256,13 @@ class FakeSiteLogDao(
         }
     }
 
+    override suspend fun markSyncConflictIfSeqMatches(id: String, expectedSeq: Long, error: String) {
+        val current = store.value[id] ?: return
+        if (current.localMutationSeq == expectedSeq) {
+            upsert(current.copy(syncDirty = true, syncError = error))
+        }
+    }
+
     override suspend fun setAudioStorageUriAndMarkDirty(id: String, storageUri: String) {
         val current = store.value[id] ?: return
         upsert(
@@ -339,6 +353,13 @@ class FakeSiteLogPhotoDao : SiteLogPhotoDao {
         }
     }
 
+    override suspend fun markSyncConflictIfSeqMatches(id: String, expectedSeq: Long, error: String) {
+        val current = store.value[id] ?: return
+        if (current.localMutationSeq == expectedSeq) {
+            upsertAll(listOf(current.copy(syncDirty = true, syncError = error)))
+        }
+    }
+
     override suspend fun setStorageUriAndMarkDirty(id: String, storageUri: String) {
         val current = store.value[id] ?: return
         upsertAll(
@@ -362,6 +383,10 @@ class FakeSiteLogPhotoDao : SiteLogPhotoDao {
         upsertAll(listOf(current.copy(localPath = null)))
     }
 
+    override suspend fun deleteById(id: String) {
+        store.value = store.value - id
+    }
+
     override suspend fun deleteByProjectId(projectId: String) {
         store.value = store.value.filterValues { it.projectId != projectId }
     }
@@ -375,6 +400,9 @@ class FakeSyncCursorDao : SyncCursorDao {
     private val store = mutableMapOf<String, SyncCursorEntity>()
 
     override suspend fun getCursor(scopeKey: String): Long? = store[scopeKey]?.cursor
+
+    override suspend fun getByPrefix(prefix: String): List<SyncCursorEntity> =
+        store.values.filter { it.scopeKey.startsWith(prefix) }
 
     override suspend fun upsert(entity: SyncCursorEntity) {
         store[entity.scopeKey] = entity

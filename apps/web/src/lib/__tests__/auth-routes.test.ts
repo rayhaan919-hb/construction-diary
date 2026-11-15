@@ -3,6 +3,9 @@ import { NextRequest } from "next/server";
 import { POST as loginPost } from "@/app/api/auth/login/route";
 import { POST as logoutPost } from "@/app/api/auth/logout/route";
 import { POST as passwordPost } from "@/app/api/auth/password/route";
+import { POST as registerPost } from "@/app/api/auth/register/route";
+import { POST as acceptInvitePost } from "@/app/api/auth/accept-invite/route";
+import { POST as resetRequestPost } from "@/app/api/auth/password-reset/request/route";
 import { GET as healthGet } from "@/app/api/health/route";
 import {
   ACCESS_COOKIE_NAME,
@@ -187,5 +190,99 @@ describe("Web auth & health route handlers", () => {
     expect(res.cookies.get(ACCESS_COOKIE_NAME)?.value ?? "").toBe("");
     expect(res.cookies.get(REFRESH_COOKIE_NAME)?.value ?? "").toBe("");
     expect(res.cookies.get(MUST_CHANGE_COOKIE_NAME)?.value ?? "").toBe("");
+  });
+
+  it("blocks cross-origin POST on /api/auth/register and /api/auth/password-reset/request with 403 CSRF_FORBIDDEN", async () => {
+    const regReq = new NextRequest("http://localhost:3000/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://evil.example",
+      },
+    });
+    const regRes = await registerPost(regReq);
+    expect(regRes.status).toBe(403);
+    expect((await regRes.json()).code).toBe("CSRF_FORBIDDEN");
+
+    const resetReq = new NextRequest("http://localhost:3000/api/auth/password-reset/request", {
+      method: "POST",
+      body: JSON.stringify({ email: "owner@example.com" }),
+      headers: {
+        "Content-Type": "application/json",
+        "Sec-Fetch-Site": "cross-site",
+      },
+    });
+    const resetRes = await resetRequestPost(resetReq);
+    expect(resetRes.status).toBe(403);
+    expect((await resetRes.json()).code).toBe("CSRF_FORBIDDEN");
+  });
+
+  it("sets httpOnly auth cookies on /api/auth/register and /api/auth/accept-invite", async () => {
+    const access = makeJwt(900);
+    const tokenPayload = {
+      access_token: access,
+      refresh_token: "refresh_saas_1",
+      access_expires_in: 900,
+      refresh_expires_at: "2027-01-13T00:00:00Z",
+      user: {
+        id: "00000000-0000-4000-8000-000000000009",
+        email: "founder@acme.pk",
+        full_name: "Founder",
+        role: "OWNER",
+        preferred_locale: "en",
+        must_change_password: false,
+      },
+    };
+
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            organization: { id: "org-1", name: "Acme Builders", slug: "acme-builders" },
+            user: tokenPayload.user,
+            tokens: tokenPayload,
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(tokenPayload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+    const regRes = await registerPost(
+      new NextRequest("http://localhost:3000/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          company_name: "Acme Builders",
+          owner_full_name: "Founder",
+          owner_email: "founder@acme.pk",
+          password: "StrongPassword123!",
+        }),
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:3000",
+        },
+      })
+    );
+    expect(regRes.status).toBe(201);
+    expect(regRes.cookies.get(ACCESS_COOKIE_NAME)?.value).toBe(access);
+    expect(regRes.cookies.get(REFRESH_COOKIE_NAME)?.value).toBe("refresh_saas_1");
+
+    const invRes = await acceptInvitePost(
+      new NextRequest("http://localhost:3000/api/auth/accept-invite", {
+        method: "POST",
+        body: JSON.stringify({ token: "inv-abc", password: "StrongPassword123!" }),
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:3000",
+        },
+      })
+    );
+    expect(invRes.status).toBe(200);
+    expect(invRes.cookies.get(ACCESS_COOKIE_NAME)?.value).toBe(access);
   });
 });

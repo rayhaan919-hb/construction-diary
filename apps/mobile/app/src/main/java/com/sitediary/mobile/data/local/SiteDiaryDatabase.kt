@@ -3,6 +3,8 @@ package com.sitediary.mobile.data.local
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.sitediary.mobile.data.local.dao.PermitDao
 import com.sitediary.mobile.data.local.dao.ProjectDao
 import com.sitediary.mobile.data.local.dao.ProjectMemberDao
@@ -25,7 +27,7 @@ import com.sitediary.mobile.data.local.entity.SyncCursorEntity
         SiteLogPhotoEntity::class,
         SyncCursorEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -36,4 +38,12 @@ abstract class SiteDiaryDatabase : RoomDatabase() {
     abstract fun siteLogDao(): SiteLogDao
     abstract fun siteLogPhotoDao(): SiteLogPhotoDao
     abstract fun syncCursorDao(): SyncCursorDao
+
+    companion object {
+        val MIGRATION_1_2: Migration = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE site_logs ADD COLUMN audio_url TEXT")
+            }
+        }
+    }
 }

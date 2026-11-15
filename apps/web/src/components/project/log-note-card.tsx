@@ -11,7 +11,9 @@ import {
   FileText,
   Mic,
   Package,
+  Pencil,
   RefreshCw,
+  Trash2,
   UserCheck,
   Users,
 } from "lucide-react";
@@ -28,24 +30,65 @@ import type { LightboxImage } from "@/components/ui/photo-lightbox";
 interface LogNoteCardProps {
   log: SiteLog;
   timezone: string;
+  canManage?: boolean;
   onRetryExtraction: (logId: string) => Promise<void>;
+  onEditLog?: (logId: string, notes: string) => Promise<void>;
+  onDeleteLog?: (logId: string) => Promise<void>;
   onViewPhoto: (image: LightboxImage) => void;
 }
 
 export function LogNoteCard({
   log,
   timezone,
+  canManage = false,
   onRetryExtraction,
+  onEditLog,
+  onDeleteLog,
   onViewPhoto,
 }: LogNoteCardProps) {
   const [showTranscript, setShowTranscript] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [draftNotes, setDraftNotes] = useState(log.notes ?? "");
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const summary = log.structured_summary;
   const photos = log.photos ?? [];
   const timeFormatted = formatTimeInZone(log.recorded_at, timezone);
   const transcriptDir = getTextDirection(log.detected_language, log.transcript);
+
+  async function handleSaveNotes(e: React.FormEvent) {
+    e.preventDefault();
+    if (!onEditLog) return;
+    setActionError(null);
+    setSavingNotes(true);
+    try {
+      await onEditLog(log.id, draftNotes);
+      setEditingNotes(false);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to save note");
+    } finally {
+      setSavingNotes(false);
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!onDeleteLog) return;
+    setActionError(null);
+    setDeleting(true);
+    try {
+      await onDeleteLog(log.id);
+      setConfirmDelete(false);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to delete log");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function handleRetry() {
     setRetryError(null);
@@ -88,15 +131,66 @@ export function LogNoteCard({
           )}
         </div>
 
-        {summary &&
-          summary.labor_count !== null &&
-          summary.labor_count !== undefined && (
-            <span className="inline-flex items-center gap-1.5 rounded border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1 font-mono text-xs font-semibold tabular-nums text-[#0F172A]">
-              <Users className="h-3.5 w-3.5 text-[#D97706]" aria-hidden="true" />
-              <span>{summary.labor_count} workers</span>
-            </span>
+        <div className="flex items-center gap-2">
+          {summary &&
+            summary.labor_count !== null &&
+            summary.labor_count !== undefined && (
+              <span className="inline-flex items-center gap-1.5 rounded border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-1 font-mono text-xs font-semibold tabular-nums text-[#0F172A]">
+                <Users className="h-3.5 w-3.5 text-[#D97706]" aria-hidden="true" />
+                <span>{summary.labor_count} workers</span>
+              </span>
+            )}
+          {canManage && onEditLog && (
+            <button
+              type="button"
+              onClick={() => {
+                setDraftNotes(log.notes ?? "");
+                setEditingNotes((v) => !v);
+              }}
+              aria-label="Edit site note"
+              className="rounded border border-[#E2E8F0] bg-[#FFFFFF] p-1.5 text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A] cursor-pointer"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
           )}
+          {canManage && onDeleteLog && (
+            confirmDelete ? (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={handleConfirmDelete}
+                  className="rounded border border-[#FECACA] bg-[#DC2626] px-2 py-1 text-xs font-semibold text-[#FFFFFF] hover:bg-[#B91C1C] disabled:opacity-50 cursor-pointer"
+                >
+                  {deleting ? "..." : "Delete"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(false)}
+                  className="rounded border border-[#E2E8F0] bg-[#FFFFFF] px-2 py-1 text-xs text-[#475569] hover:bg-[#F8FAFC] cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(true)}
+                aria-label="Delete site note"
+                className="rounded border border-[#E2E8F0] bg-[#FFFFFF] p-1.5 text-[#475569] hover:border-[#FECACA] hover:bg-[#FEF2F2] hover:text-[#DC2626] cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )
+          )}
+        </div>
       </div>
+
+      {actionError && (
+        <p role="alert" className="text-xs font-medium text-[#DC2626]">
+          {actionError}
+        </p>
+      )}
 
       {/* Extraction Failed Banner */}
       {log.extraction_status === "FAILED" && (
@@ -187,12 +281,54 @@ export function LogNoteCard({
         )
       )}
 
-      {/* Optional Supervisor Typed Note */}
-      {log.notes && (
-        <div className="rounded border border-[#E2E8F0] bg-[#FFFFFF] px-3 py-2 text-xs text-[#334155]">
-          <span className="font-semibold text-[#0F172A]">Field Note: </span>
-          <span dir="auto">{log.notes}</span>
+      {/* Audio Player when signed URL is available */}
+      {log.audio_url && (
+        <div className="rounded border border-[#E2E8F0] bg-[#F8FAFC] p-2">
+          <audio
+            controls
+            preload="none"
+            src={log.audio_url}
+            className="h-8 w-full"
+          >
+            Your browser does not support audio playback.
+          </audio>
         </div>
+      )}
+
+      {/* Optional Supervisor Typed Note (inline editable) */}
+      {editingNotes ? (
+        <form onSubmit={handleSaveNotes} className="space-y-2 rounded border border-[#E2E8F0] bg-[#F8FAFC] p-3">
+          <textarea
+            rows={3}
+            value={draftNotes}
+            onChange={(e) => setDraftNotes(e.target.value)}
+            placeholder="Update typed supervisor field notes..."
+            className="w-full rounded-md border border-[#CBD5E1] bg-[#FFFFFF] px-3 py-2 text-xs text-[#0F172A] focus:border-[#D97706] focus:outline-none"
+          />
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setEditingNotes(false)}
+              className="rounded border border-[#E2E8F0] bg-[#FFFFFF] px-2.5 py-1 text-xs text-[#475569] hover:bg-[#F8FAFC] cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={savingNotes}
+              className="rounded bg-[#D97706] px-3 py-1 text-xs font-semibold text-[#FFFFFF] hover:bg-[#B45309] disabled:opacity-50 cursor-pointer"
+            >
+              {savingNotes ? "Saving..." : "Save Note"}
+            </button>
+          </div>
+        </form>
+      ) : (
+        log.notes && (
+          <div className="rounded border border-[#E2E8F0] bg-[#FFFFFF] px-3 py-2 text-xs text-[#334155]">
+            <span className="font-semibold text-[#0F172A]">Field Note: </span>
+            <span dir="auto">{log.notes}</span>
+          </div>
+        )
       )}
 
       {/* Transcript Toggle (with dir="auto" for Urdu/Arabic) */}

@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <string name="app_name">سجل الموقع</string>
+
+    <!-- Language & Common -->
+    <string name="lang_en">EN</string>
+    <string name="lang_ur">اردو</string>
+    <string name="retry">إعادة المحاولة</string>
+    <string name="cancel">إلغاء</string>
+    <string name="save">حفظ</string>
+    <string name="back">رجوع</string>
+    <string name="close">إغلاق</string>
+    <string name="sync_now">مزامنة الآن</string>
+    <string name="offline_badge">دون اتصال</string>
+    <string name="pending_sync_count">%1$d بانتظار المزامنة</string>
+    <string name="all_synced">تمت المزامنة</string>
+    <string name="syncing">جارٍ المزامنة…</string>
+    <string name="sync_error_prefix">مشكلة مزامنة: %1$s</string>
+
+    <!-- Auth -->
+    <string name="login_title">تسجيل الدخول إلى سجل الموقع</string>
+    <string name="login_subtitle">سجلات يومية ومتابعة التصاريح دون اتصال</string>
+    <string name="email_label">البريد الإلكتروني</string>
+    <string name="password_label">كلمة المرور</string>
+    <string name="sign_in">تسجيل الدخول</string>
+    <string name="signing_in">جارٍ تسجيل الدخول…</string>
+    <string name="login_error_invalid">البريد الإلكتروني أو كلمة المرور غير صحيحة</string>
+    <string name="login_error_network">تعذر الاتصال بالخادم. تحقق من الشبكة.</string>
+
+    <string name="change_password_title">تحديث كلمة المرور</string>
+    <string name="change_password_subtitle">لأمانك، يرجى استبدال كلمة المرور المؤقتة قبل المتابعة.</string>
+    <string name="current_password_label">كلمة المرور الحالية</string>
+    <string name="new_password_label">كلمة المرور الجديدة (8 أحرف على الأقل)</string>
+    <string name="confirm_password_label">تأكيد كلمة المرور الجديدة</string>
+    <string name="update_password_cta">حفظ كلمة المرور</string>
+    <string name="password_mismatch">كلمات المرور الجديدة غير متطابقة</string>
+    <string name="password_too_short">يجب أن تتكون كلمة المرور من 8 أحرف على الأقل</string>
+
+    <!-- Projects List -->
+    <string name="projects_title">مواقعي</string>
+    <string name="sign_out">تسجيل الخروج</string>
+    <string name="mobile_data_upload_label">رفع الصوت والصور عبر بيانات الهاتف</string>
+    <string name="mobile_data_upload_hint">إيقاف = Wi-Fi فقط (لتوفير البيانات)</string>
+    <string name="projects_empty_title">لا توجد مشاريع مخصصة بعد</string>
+    <string name="projects_empty_desc">اطلب من مالك المشروع إضافتك كمشرف موقع، ثم اضغط على مزامنة.</string>
+    <string name="permit_health_ok">التصاريح سارية</string>
+    <string name="permit_health_warn">تصريح قريب الانتهاء</string>
+    <string name="permit_health_expired">تصريح منتهي الصلاحية</string>
+    <string name="permit_health_none">لا توجد تصاريح</string>
+    <string name="today_logs_count">%1$d سجلات اليوم</string>
+    <string name="today_labor_count">الطاقم: %1$d</string>
+    <string name="today_labor_none">الطاقم: --</string>
+
+    <!-- Project Diary -->
+    <string name="diary_title">سجل الموقع</string>
+    <string name="record_site_note_cta">تسجيل ملاحظة موقع</string>
+    <string name="permits_button">التصاريح</string>
+    <string name="today_summary_header">اليوم (%1$s)</string>
+    <string name="diary_empty_title">لم يتم تسجيل ملاحظات موقع بعد</string>
+    <string name="diary_empty_desc">اضغط على تسجيل ملاحظة موقع لالتقاط التحديثات الصوتية والصور دون اتصال.</string>
+    <string name="permit_banner_expired_single">تصريح واحد منتهي: %1$s (%2$d يوم)</string>
+    <string name="permit_banner_expired_multi">%1$d تصاريح منتهية • التالي: %2$s</string>
+    <string name="permit_banner_expiring_single">ينتهي التصريح خلال %1$d يومًا: %2$s</string>
+    <string name="permit_banner_expiring_multi">%1$d تصاريح قريبة الانتهاء • التالي: %2$s (%3$d يوم)</string>
+    <string name="view_permits">عرض التصاريح</string>
+
+    <!-- Extraction & Upload Statuses -->
+    <string name="status_synced">متزامن</string>
+    <string name="status_pending_push">بانتظار المزامنة</string>
+    <string name="media_pending">الوسائط بالانتظار</string>
+    <string name="media_uploaded">تم رفع الوسائط</string>
+    <string name="extraction_not_started">لا يوجد صوت</string>
+    <string name="extraction_pending">بانتظار الذكاء الاصطناعي</string>
+    <string name="extraction_processing">جارٍ الاستخراج…</string>
+    <string name="extraction_done">الذكاء الاصطناعي جاهز</string>
+    <string name="extraction_failed">فشل الذكاء الاصطناعي</string>
+    <string name="edited_by_human_badge">عدّله المشرف</string>
+
+    <!-- Record Site Note -->
+    <string name="record_note_title">تسجيل ملاحظة موقع</string>
+    <string name="audio_section_title">تحديث صوتي (M4A • بحد أقصى 5:00)</string>
+    <string name="start_recording">بدء التسجيل الصوتي</string>
+    <string name="stop_recording">إيقاف التسجيل</string>
+    <string name="rerecord_audio">إعادة التسجيل</string>
+    <string name="delete_audio">حذف الصوت</string>
+    <string name="audio_recorded_label">تم التسجيل: %1$s</string>
+    <string name="photos_section_title">صور الموقع (%1$d)</string>
+    <string name="open_camera">التقاط صورة موقع</string>
+    <string name="capture_photo">التقاط</string>
+    <string name="close_camera">إنهاء الكاميرا</string>
+    <string name="gps_strip_notice">تمت إزالة بيانات الموقع الجغرافي (حسب سياسة المشروع)</string>
+    <string name="gps_keep_notice">تم تفعيل GPS للصور حسب سياسة المشروع</string>
+    <string name="typed_note_label">ملاحظة نصية (اختياري)</string>
+    <string name="typed_note_hint">أضف الطقس أو التوريدات أو ملاحظات السلامة أو المعوقات…</string>
+    <string name="save_note_offline">حفظ الملاحظة دون اتصال</string>
+    <string name="permission_audio_needed">مطلوب إذن الميكروفون لتسجيل الملاحظات الصوتية.</string>
+    <string name="permission_camera_needed">مطلوب إذن الكاميرا لالتقاط صور الموقع.</string>
+    <string name="grant_permission">منح الإذن</string>
+    <string name="record_validation_empty">سجّل صوتًا أو التقط صورة أو أدخل ملاحظة قبل الحفظ.</string>
+
+    <!-- Log Detail & Edit -->
+    <string name="log_detail_title">تفاصيل ملاحظة الموقع</string>
+    <string name="play_audio">تشغيل الملاحظة الصوتية</string>
+    <string name="stop_audio">إيقاف التشغيل</string>
+    <string name="retry_ai_extraction">إعادة استخراج الذكاء الاصطناعي</string>
+    <string name="transcript_section">النص الصوتي (%1$s)</string>
+    <string name="no_transcript_yet">سيظهر النص بعد رفع الصوت واكتمال الاستخراج.</string>
+    <string name="summary_section">الملخص اليومي المنظم</string>
+    <string name="tasks_completed_label">المهام المنجزة (سطر لكل مهمة)</string>
+    <string name="labor_count_label">إجمالي الطاقم / العمال</string>
+    <string name="materials_label">توريدات المواد (سطر لكل صنف)</string>
+    <string name="blockers_label">المعوقات / التأخيرات (سطر لكل بند)</string>
+    <string name="save_human_edits">حفظ التصحيحات</string>
+    <string name="saved_for_sync">تم الحفظ محليًا — بانتظار المزامنة</string>
+
+    <!-- Permits -->
+    <string name="permits_title">تصاريح الموقع</string>
+    <string name="add_permit_cta">إضافة تصريح</string>
+    <string name="permits_empty_title">لا توجد تصاريح مسجلة</string>
+    <string name="permits_empty_desc">أضف التصاريح البلدية أو السلامة أو البيئية لتتبع انتهائها دون اتصال.</string>
+    <string name="permit_status_active">سارٍ</string>
+    <string name="permit_status_expiring">قريب الانتهاء</string>
+    <string name="permit_status_expired">منتهي</string>
+    <string name="permit_days_remaining">متبقي %1$d يومًا</string>
+    <string name="permit_days_overdue">متأخر %1$d يومًا</string>
+    <string name="permit_expires_today">ينتهي اليوم</string>
+    <string name="permit_name_label">اسم التصريح *</string>
+    <string name="permit_authority_label">الجهة المصدرة *</string>
+    <string name="permit_number_label">رقم التصريح</string>
+    <string name="permit_issue_date_label">تاريخ الإصدار (YYYY-MM-DD)</string>
+    <string name="permit_expiry_date_label">تاريخ الانتهاء * (YYYY-MM-DD)</string>
+    <string name="attach_permit_photo">التقاط وثيقة التصريح</string>
+    <string name="permit_photo_attached">تم إرفاق صورة الوثيقة</string>
+    <string name="permit_validation_required">اسم التصريح والجهة وتاريخ الانتهاء YYYY-MM-DD مطلوبة.</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_name">تنبيهات التصاريح والمزامنة</string>
+    <string name="notification_channel_desc">تذكيرات انتهاء التصاريح وحالة الاستخراج بالذكاء الاصطناعي</string>
+
+    <!-- Extra Commercial Hardening Strings -->
+    <string name="offline_banner_text">وضع عدم الاتصال — يتم حفظ التغييرات محليًا بأمان</string>
+    <string name="change_password_cta">كلمة المرور</string>
+    <string name="sign_out_confirm_title">تسجيل الخروج؟</string>
+    <string name="sign_out_pending_warning">لديك %1$d تغييرات محلية غير متزامنة. هل تريد المتابعة؟</string>
+    <string name="sign_out_clean_message">هل أنت متأكد من تسجيل الخروج؟</string>
+    <string name="cancel_cta">إلغاء</string>
+    <string name="edit_notes_cta">تعديل الملاحظات</string>
+    <string name="save_notes_cta">حفظ الملاحظات</string>
+    <string name="delete_log_cta">حذف السجل</string>
+    <string name="delete_log_confirm_title">حذف سجل الموقع؟</string>
+    <string name="delete_log_confirm_body">سيتم حذف السجل محليًا ومزامنة الحذف عند توفر الإنترنت.</string>
+    <string name="delete_confirm_cta">حذف</string>
+    <string name="edit_permit_cta">تعديل التصريح</string>
+    <string name="delete_permit_cta">حذف التصريح</string>
+    <string name="delete_permit_confirm_title">حذف التصريح؟</string>
+    <string name="delete_permit_confirm_body">سيتم حذف التصريح دون اتصال ومزامنته مع الخادم.</string>
+    <string name="open_permit_doc_cta">فتح المستند</string>
+    <string name="photo_preview_close">إغلاق المعاينة</string>
+    <string name="preview_recording_cta">استماع للتسجيل</string>
+    <string name="stop_preview_cta">إيقاف التشغيل</string>
+    <string name="play_audio_note_cta">تشغيل الملاحظة الصوتية</string>
+</resources>

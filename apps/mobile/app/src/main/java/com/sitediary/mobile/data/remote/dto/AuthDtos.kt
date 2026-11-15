@@ -28,7 +28,8 @@ data class ChangePasswordRequestDto(
 
 @Serializable
 data class DeviceTokenRequestDto(
-    @SerialName("fcm_token") val fcmToken: String
+    @SerialName("fcm_token") val fcmToken: String,
+    val platform: String = "ANDROID"
 )
 
 @Serializable

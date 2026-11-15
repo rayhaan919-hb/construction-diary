@@ -1,9 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MUST_CHANGE_COOKIE_NAME } from "@/lib/config";
+import { verifySameOriginRequest } from "@/lib/csrf";
 import { clearAuthCookies, setAuthCookies } from "@/lib/auth-cookies";
 import { fetchBackendWithAuth } from "@/lib/server-api";
 
 export async function POST(req: NextRequest) {
+  if (!verifySameOriginRequest(req)) {
+    return NextResponse.json(
+      {
+        type: "about:blank",
+        title: "Forbidden",
+        status: 403,
+        code: "CSRF_FORBIDDEN",
+        detail: "Cross-origin password change requests are blocked.",
+      },
+      { status: 403 }
+    );
+  }
+
   let rawBody: string;
   try {
     rawBody = await req.text();

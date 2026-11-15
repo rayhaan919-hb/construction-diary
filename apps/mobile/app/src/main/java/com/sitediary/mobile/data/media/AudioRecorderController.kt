@@ -134,24 +134,40 @@ class AudioRecorderController @Inject constructor(
         _elapsedMs.value = 0L
     }
 
-    fun togglePlayback(localAudioPath: String) {
+    fun togglePlayback(audioSource: String) {
         if (_isPlaying.value) {
             stopPlayback()
             return
         }
-        val file = File(localAudioPath)
-        if (!file.exists()) return
+        val isRemote = audioSource.startsWith("https://", ignoreCase = true) ||
+            audioSource.startsWith("http://", ignoreCase = true)
+        if (!isRemote) {
+            val file = File(audioSource)
+            if (!file.exists()) return
+        }
         runCatching {
             val mediaPlayer = MediaPlayer().apply {
-                setDataSource(file.absolutePath)
+                setDataSource(if (isRemote) audioSource else File(audioSource).absolutePath)
                 setOnCompletionListener {
                     stopPlayback()
                 }
-                prepare()
-                start()
+                setOnErrorListener { _, _, _ ->
+                    stopPlayback()
+                    true
+                }
+                if (isRemote) {
+                    setOnPreparedListener { mp ->
+                        mp.start()
+                        _isPlaying.value = true
+                    }
+                    prepareAsync()
+                } else {
+                    prepare()
+                    start()
+                    _isPlaying.value = true
+                }
             }
             player = mediaPlayer
-            _isPlaying.value = true
         }.onFailure {
             stopPlayback()
         }

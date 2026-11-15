@@ -314,6 +314,78 @@ class SiteDiaryRepository @Inject constructor(
         triggerSync()
     }
 
+    suspend fun editSiteLogNotesOffline(logId: String, notes: String) {
+        val existing = siteLogDao.getById(logId) ?: return
+        val nowIso = clock.instant().toString()
+        val updated = existing.copy(
+            notes = notes.trim().takeIf { it.isNotEmpty() },
+            editedByHuman = true,
+            clientUpdatedAt = nowIso,
+            updatedAt = nowIso,
+            syncDirty = true,
+            localMutationSeq = existing.localMutationSeq + 1L,
+            syncError = null
+        )
+        siteLogDao.upsert(updated)
+        triggerSync()
+    }
+
+    suspend fun softDeleteSiteLogOffline(logId: String) {
+        val existing = siteLogDao.getById(logId) ?: return
+        val nowIso = clock.instant().toString()
+        val deleted = existing.copy(
+            deletedAt = nowIso,
+            clientUpdatedAt = nowIso,
+            updatedAt = nowIso,
+            syncDirty = true,
+            localMutationSeq = existing.localMutationSeq + 1L,
+            syncError = null
+        )
+        siteLogDao.upsert(deleted)
+        triggerSync()
+    }
+
+    suspend fun editPermitOffline(
+        permitId: String,
+        permitName: String,
+        authority: String,
+        permitNumber: String?,
+        issueDate: String?,
+        expiryDate: String
+    ) {
+        val existing = permitDao.getById(permitId) ?: return
+        val nowIso = clock.instant().toString()
+        val updated = existing.copy(
+            permitName = permitName.trim(),
+            authority = authority.trim(),
+            permitNumber = permitNumber?.trim()?.takeIf { it.isNotEmpty() },
+            issueDate = issueDate?.trim()?.takeIf { it.isNotEmpty() },
+            expiryDate = expiryDate.trim(),
+            clientUpdatedAt = nowIso,
+            updatedAt = nowIso,
+            syncDirty = true,
+            localMutationSeq = existing.localMutationSeq + 1L,
+            syncError = null
+        )
+        permitDao.upsert(updated)
+        triggerSync()
+    }
+
+    suspend fun softDeletePermitOffline(permitId: String) {
+        val existing = permitDao.getById(permitId) ?: return
+        val nowIso = clock.instant().toString()
+        val deleted = existing.copy(
+            deletedAt = nowIso,
+            clientUpdatedAt = nowIso,
+            updatedAt = nowIso,
+            syncDirty = true,
+            localMutationSeq = existing.localMutationSeq + 1L,
+            syncError = null
+        )
+        permitDao.upsert(deleted)
+        triggerSync()
+    }
+
     suspend fun triggerSync() {
         val mobileData = appPreferences.uploadOnMobileData.first()
         syncScheduler.scheduleImmediateSync(mobileData)

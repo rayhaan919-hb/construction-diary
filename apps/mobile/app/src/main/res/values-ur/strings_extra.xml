@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <string name="offline_banner_text">آف لائن موڈ — تبدیلیاں ڈیوائس پر محفوظ رہتی ہیں</string>
+    <string name="change_password_cta">پاس ورڈ</string>
+    <string name="sign_out_confirm_title">سائن آؤٹ کریں؟</string>
+    <string name="sign_out_pending_warning">آپ کی %1$d غیر سنک تبدیلیاں قطار میں ہیں۔ کیا آپ واقعی سائن آؤٹ کرنا چاہتے ہیں؟</string>
+    <string name="sign_out_clean_message">کیا آپ واقعی سائٹ ڈائری سے سائن آؤٹ کرنا چاہتے ہیں؟</string>
+    <string name="cancel_cta">منسوخ کریں</string>
+    <string name="edit_notes_cta">نوٹس میں ترمیم کریں</string>
+    <string name="save_notes_cta">نوٹس محفوظ کریں</string>
+    <string name="delete_log_cta">لاگ حذف کریں</string>
+    <string name="delete_log_confirm_title">سائٹ لاگ حذف کریں؟</string>
+    <string name="delete_log_confirm_body">یہ لاگ مقامی طور پر حذف ہو جائے گا اور آن لائن ہونے پر سرور پر بھی حذف ہو جائے گا۔</string>
+    <string name="delete_confirm_cta">حذف کریں</string>
+    <string name="edit_permit_cta">پرمٹ میں ترمیم کریں</string>
+    <string name="delete_permit_cta">پرمٹ حذف کریں</string>
+    <string name="delete_permit_confirm_title">پرمٹ حذف کریں؟</string>
+    <string name="delete_permit_confirm_body">یہ پرمٹ آف لائن حذف ہو جائے گا اور سنک پر سرور سے ہٹ جائے گا۔</string>
+    <string name="open_permit_doc_cta">دستاویز کھولیں</string>
+    <string name="photo_preview_close">پیش نظارہ بند کریں</string>
+    <string name="preview_recording_cta">ریکارڈنگ سنیں</string>
+    <string name="stop_preview_cta">چلانا بند کریں</string>
+    <string name="play_audio_note_cta">آڈیو نوٹ سنیں</string>
+</resources>

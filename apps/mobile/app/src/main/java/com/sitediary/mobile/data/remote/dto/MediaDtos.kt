@@ -21,6 +21,7 @@ data class UploadUrlRequestDto(
 
 @Serializable
 data class UploadTicketDto(
+    @SerialName("ticket_id") val ticketId: String? = null,
     @SerialName("upload_url") val uploadUrl: String,
     val method: String,
     val headers: Map<String, String>,
@@ -31,5 +32,7 @@ data class UploadTicketDto(
 @Serializable
 data class MediaCompleteRequestDto(
     val kind: MediaKind,
-    @SerialName("object_id") val objectId: String
+    @SerialName("object_id") val objectId: String,
+    @SerialName("ticket_id") val ticketId: String? = null,
+    val sha256: String? = null
 )

@@ -31,6 +31,7 @@ data class RecordNoteUiState(
     val elapsedMs: Long = 0L,
     val recordedFile: File? = null,
     val recordedDurationMs: Int? = null,
+    val isPlayingPreview: Boolean = false,
     val photos: List<CapturedPhotoDraft> = emptyList(),
     val notes: String = "",
     val isCameraOpen: Boolean = false,
@@ -55,19 +56,28 @@ class RecordNoteViewModel @Inject constructor(
 
     private val _localState = MutableStateFlow(RecordNoteUiState())
 
+    @Suppress("UNCHECKED_CAST")
     val uiState: StateFlow<RecordNoteUiState> = combine(
         _localState,
         repository.observeProject(projectId),
         audioRecorder.isRecording,
         audioRecorder.elapsedMs,
-        audioRecorder.completedRecording
-    ) { local, project, isRecording, elapsedMs, completed ->
+        audioRecorder.completedRecording,
+        audioRecorder.isPlaying
+    ) { values ->
+        val local = values[0] as RecordNoteUiState
+        val project = values[1] as ProjectEntity?
+        val isRecording = values[2] as Boolean
+        val elapsedMs = values[3] as Long
+        val completed = values[4] as com.sitediary.mobile.data.media.RecordingResult?
+        val isPlayingPreview = values[5] as Boolean
         local.copy(
             project = project,
             isRecording = isRecording,
             elapsedMs = if (isRecording) elapsedMs else (completed?.durationMs?.toLong() ?: local.elapsedMs),
             recordedFile = completed?.file ?: local.recordedFile,
-            recordedDurationMs = completed?.durationMs ?: local.recordedDurationMs
+            recordedDurationMs = completed?.durationMs ?: local.recordedDurationMs,
+            isPlayingPreview = isPlayingPreview
         )
     }.stateIn(
         scope = viewModelScope,
@@ -99,6 +109,7 @@ class RecordNoteViewModel @Inject constructor(
     }
 
     fun deleteRecording() {
+        audioRecorder.stopPlayback()
         audioRecorder.stopRecording()
         audioRecorder.clearCompletedRecording()
         _localState.value.recordedFile?.let { mediaFileManager.deleteFileIfExists(it.absolutePath) }
@@ -109,6 +120,11 @@ class RecordNoteViewModel @Inject constructor(
                 elapsedMs = 0L
             )
         }
+    }
+
+    fun togglePreviewPlayback() {
+        val path = uiState.value.recordedFile?.absolutePath ?: return
+        audioRecorder.togglePlayback(path)
     }
 
     fun openCamera() {

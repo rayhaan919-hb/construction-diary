@@ -27,7 +27,7 @@ object DatabaseModule {
             context,
             SiteDiaryDatabase::class.java,
             "site_diary.db"
-        ).fallbackToDestructiveMigration(dropAllTables = true).build()
+        ).addMigrations(SiteDiaryDatabase.MIGRATION_1_2).build()
     }
 
     @Provides

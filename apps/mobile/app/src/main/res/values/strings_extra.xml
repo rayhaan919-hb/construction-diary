@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="offline_banner_text">Offline mode — changes queue safely on device</string>
+    <string name="change_password_cta">Password</string>
+    <string name="sign_out_confirm_title">Sign out?</string>
+    <string name="sign_out_pending_warning">You have %1$d unsynced local changes queued on this device. Signing out clears local settings and cached credentials, though database records stay until next login by the same user. Continue?</string>
+    <string name="sign_out_clean_message">Are you sure you want to sign out of Site Diary?</string>
+    <string name="cancel_cta">Cancel</string>
+    <string name="edit_notes_cta">Edit Notes</string>
+    <string name="save_notes_cta">Save Notes</string>
+    <string name="delete_log_cta">Delete Log</string>
+    <string name="delete_log_confirm_title">Delete site log?</string>
+    <string name="delete_log_confirm_body">This removes the log locally immediately and syncs deletion to the server when online.</string>
+    <string name="delete_confirm_cta">Delete</string>
+    <string name="edit_permit_cta">Edit Permit</string>
+    <string name="delete_permit_cta">Delete Permit</string>
+    <string name="delete_permit_confirm_title">Delete permit?</string>
+    <string name="delete_permit_confirm_body">This deletes the permit record offline-first and queues removal on sync.</string>
+    <string name="open_permit_doc_cta">Open Document</string>
+    <string name="photo_preview_close">Close preview</string>
+    <string name="preview_recording_cta">Preview Recording</string>
+    <string name="stop_preview_cta">Stop Playback</string>
+    <string name="play_audio_note_cta">Play Audio Note</string>
+</resources>

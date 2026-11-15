@@ -54,11 +54,23 @@ class FcmTokenManager @Inject constructor(
     }
 
     suspend fun registerToken(token: String) {
-        if (token.isBlank() || appPreferences.getAccessToken().isNullOrBlank()) return
+        if (token.isBlank()) return
+        appPreferences.saveFcmToken(token)
+        if (appPreferences.getAccessToken().isNullOrBlank()) return
         runCatching {
             api.registerDeviceToken(DeviceTokenRequestDto(fcmToken = token))
         }.onFailure { err ->
             Log.w(TAG, "Failed to register FCM token with backend API.", err)
+        }
+    }
+
+    suspend fun unregisterCurrentToken() {
+        val token = appPreferences.getSavedFcmToken() ?: return
+        if (token.isBlank() || appPreferences.getAccessToken().isNullOrBlank()) return
+        runCatching {
+            api.unregisterDeviceToken(token)
+        }.onFailure { err ->
+            Log.w(TAG, "Failed to unregister FCM token on sign out.", err)
         }
     }
 
