@@ -19,11 +19,34 @@ val localProps = Properties().apply {
     }
 }
 
-val apiBaseUrl: String = (
+val debugApiBaseUrl: String = (
     localProps.getProperty("api.baseUrl")
         ?: System.getenv("API_BASE_URL")
         ?: "http://10.0.2.2:8000"
     ).trimEnd('/')
+
+val releaseApiBaseUrl: String = (
+    localProps.getProperty("api.releaseBaseUrl")
+        ?: System.getenv("RELEASE_API_BASE_URL")
+        ?: System.getenv("API_BASE_URL")
+        ?: ""
+    ).trimEnd('/')
+
+val isReleaseBuildRequested = gradle.startParameter.taskNames.any {
+    it.contains("Release", ignoreCase = true)
+}
+if (isReleaseBuildRequested) {
+    val lower = releaseApiBaseUrl.lowercase()
+    if (!lower.startsWith("https://") ||
+        lower.contains("localhost") ||
+        lower.contains("127.0.0.1") ||
+        lower.contains("10.0.2.2")
+    ) {
+        throw GradleException(
+            "Release builds require an external HTTPS API_BASE_URL or RELEASE_API_BASE_URL (got '$releaseApiBaseUrl')."
+        )
+    }
+}
 
 android {
     namespace = "com.sitediary.mobile"
@@ -37,7 +60,7 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        buildConfigField("String", "API_BASE_URL", "\"$debugApiBaseUrl\"")
     }
 
     signingConfigs {
@@ -60,7 +83,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "API_BASE_URL", "\"$debugApiBaseUrl\"")
+        }
         release {
+            buildConfigField("String", "API_BASE_URL", "\"$releaseApiBaseUrl\"")
             isMinifyEnabled = true
             isShrinkResources = true
             val releaseSigning = signingConfigs.getByName("release")
